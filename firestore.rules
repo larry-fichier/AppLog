@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: equipment
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required) - Name/model
+    //   - category: string (required) - ["rame", "cuisine", "electronique", "groupe"]
+    //   - status: string (required) - ["fonctionnel", "en_reparation", "hors_service"]
+    //   - lastMaintenance: string (optional) - ISO 8601
+    //   - createdAt: string (required) - ISO 8601
+    //   - createdBy: string (required) - User UID
+    //   - details: map (optional) - specific category fields
+    //
+    // Collection: users
+    // Document ID: userId (UID)
+    // Fields:
+    //   - email: string (required)
+    //   - role: string (required) - ["admin", "viewer"]
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function canConsult() {
+      return isAuthenticated() && getUserRole() in ['csph', 'chef_service_administratif', 'agent_logistique', 'chef_bureau_logistique', 'admin'];
+    }
+
+    function canModify() {
+      return isAuthenticated() && getUserRole() in ['agent_logistique', 'chef_bureau_logistique', 'admin'];
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (getUserRole() in ['chef_bureau_logistique', 'admin'] ||
+         (request.auth.token.email == "larryfichier@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // Rules for system configuration
+    match /config/global {
+      allow read: if true; 
+      allow write: if isAdmin();
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEquipment(data) {
+      return data.keys().hasAll(['name', 'category', 'status', 'createdAt', 'location']) &&
+             data.name is string && data.name.size() < 200 &&
+             data.location is map;
+    }
+
+    // Rules for equipment
+    match /equipment/{equipmentId} {
+      // Temporarily open for Bypass mode (Demo purposes)
+      // In production, use: allow read: if canConsult();
+      allow read: if true; 
+      allow write: if canModify() || request.auth == null; // null check to allow bypass write for demos
+    }
+
+    // Rules for users
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId); 
+      allow update: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])); 
+      allow delete: if isAdmin();
+    }
+  }
+}

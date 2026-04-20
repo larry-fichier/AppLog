@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "Equipment": {
+      "title": "Equipment",
+      "description": "Logistics equipment data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier" },
+        "name": { "type": "string", "description": "Name or model of the equipment" },
+        "category": { "type": "string", "description": "Category ID from config" },
+        "status": { "type": "string", "enum": ["fonctionnel", "en_reparation", "hors_service"], "description": "Current operational status" },
+        "location": {
+          "type": "object",
+          "properties": {
+             "service": { "type": "string", "description": "Zone/Service ID" },
+             "office": { "type": "string", "description": "Station/Bureau ID" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "createdBy": { "type": "string", "description": "UID of the user who created the entry" },
+        "details": { "type": "object" }
+      },
+      "required": ["name", "category", "status", "location"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Application user profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "chef_bureau_logistique", "agent_logistique", "csph", "chef_service_administratif"], "description": "User role" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "GlobalConfig": {
+      "title": "Global Configuration",
+      "description": "Dynamic settings for the HELIOS system",
+      "type": "object",
+      "properties": {
+        "categories": { "type": "array" },
+        "zones": { "type": "array" },
+        "stations": { "type": "array" },
+        "roles": { "type": "array" }
+      }
+    }
+  },
+  "firestore": {
+    "/equipment/{equipmentId}": {
+      "schema": "Equipment",
+      "description": "Collection of all logistics equipment"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles"
+    },
+    "/config/global": {
+      "schema": "GlobalConfig",
+      "description": "System-wide dynamic settings"
+    }
+  }
+}

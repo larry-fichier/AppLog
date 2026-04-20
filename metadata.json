@@ -1,0 +1,6 @@
+{
+  "name": "Portail Logistique Pro",
+  "description": "Gestion centralisée et consultation des équipements logistiques (Véhicules, Cuisine, Électronique, Groupes).",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
