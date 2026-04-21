@@ -345,6 +345,118 @@ async function startServer() {
     }
   });
 
+  // --- API: BULK IMPORT ---
+  app.post("/api/admin/import", async (req, res) => {
+    const callerUid = req.headers['x-user-uid'] as string;
+    const { data } = req.body; // Array of items
+    
+    if (!callerUid) return res.status(401).json({ error: "Non authentifié" });
+    if (!Array.isArray(data)) return res.status(400).json({ error: "Format de données invalide" });
+
+    try {
+      const ctx = await getContext(callerUid);
+      const allowedRoles = ["admin", "super_admin"];
+      if (!allowedRoles.includes(ctx.role)) {
+        return res.status(403).json({ error: "Autorisation refusée" });
+      }
+
+      console.log(`[Import] Début import de ${data.length} lignes par ${ctx.id}`);
+      
+      let importedCount = 0;
+      let errors: string[] = [];
+
+      // Get existing config to map names to IDs
+      const catsRes = await query("SELECT id, code, label FROM categories");
+      const zonesRes = await query("SELECT id, name FROM zones");
+      const stationsRes = await query("SELECT id, name FROM stations");
+
+      // Helper for fuzzy matching
+      const findBestMatch = (input: string, choices: { id: string, name?: string, label?: string, code?: string }[], type: 'name' | 'label' | 'code' = 'label') => {
+        if (!input) return null;
+        const normalizedInput = input.trim().toLowerCase();
+        
+        // 1. Exact match
+        let match = choices.find(c => {
+          const val = (c as any)[type] || (c as any).name || (c as any).label || (c as any).code;
+          return val?.toString().toLowerCase() === normalizedInput;
+        });
+        if (match) return match;
+
+        // 2. Substring match
+        match = choices.find(c => {
+          const val = ((c as any)[type] || (c as any).name || (c as any).label || (c as any).code)?.toString().toLowerCase();
+          return val?.includes(normalizedInput) || normalizedInput.includes(val || "");
+        });
+        if (match) return match;
+
+        // 3. Fallback: First one for the type if strictly needed or null
+        return null;
+      };
+
+      for (let i = 0; i < data.length; i++) {
+        const item = data[i];
+        try {
+          // 1. Map Category (Intelligent fuzzy match)
+          const cat = findBestMatch(item.category, catsRes.rows, 'label');
+          if (!cat) throw new Error(`Catégorie non reconnue: "${item.category}". Vérifiez l'orthographe ou créez la catégorie.`);
+
+          // 2. Map Zone (Intelligent fuzzy match)
+          const zone = findBestMatch(item.zone, zonesRes.rows, 'name');
+          if (!zone) throw new Error(`Zone non reconnue: "${item.zone}".`);
+
+          // 3. Map Station (optional)
+          const station = findBestMatch(item.station, stationsRes.rows, 'name');
+
+          // 4. Insert
+          const queryText = `
+            INSERT INTO equipment (name, category_id, status, zone_id, station_id, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+          `;
+          const values = [
+            item.name || `Import #${i+1}`,
+            cat.id,
+            item.status || "fonctionnel",
+            zone.id,
+            station?.id || null,
+            ctx.id
+          ];
+          
+          const equipRes = await queryHelios(queryText, values, ctx);
+          const equipmentId = equipRes.rows[0].id;
+
+          // 5. Details (optional)
+          if (item.details && typeof item.details === 'object') {
+            for (const [key, val] of Object.entries(item.details)) {
+              if (val) {
+                await query(`
+                  INSERT INTO equipment_details (equipment_id, field_key, field_value)
+                  VALUES ($1, $2, $3)
+                  ON CONFLICT DO NOTHING
+                `, [equipmentId, key, String(val)]);
+              }
+            }
+          }
+
+          importedCount++;
+        } catch (e: any) {
+          errors.push(`Ligne ${i + 1}: ${e.message}`);
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        imported: importedCount, 
+        total: data.length,
+        errors: errors.slice(0, 10), // Return only first 10 errors
+        hasMoreErrors: errors.length > 10
+      });
+    } catch (e: any) {
+      console.error("Import error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

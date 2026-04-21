@@ -7,13 +7,26 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, Save, Users, Settings2, MapPin, ShieldCheck, Mail, Key, UserPlus } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, Users, Settings2, MapPin, ShieldCheck, Mail, Key, UserPlus, Upload, FileSpreadsheet, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from 'xlsx';
 
 export function AdminSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'results'>('upload');
+  const [rawFileData, setRawFileData] = useState<any[]>([]);
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({
+    name: "",
+    category: "",
+    zone: "",
+    status: "",
+    station: ""
+  });
+  const [importStats, setImportStats] = useState<{ imported: number, total: number, errors: string[] } | null>(null);
   const [newUser, setNewUser] = useState({ email: "", password: "", displayName: "", role: "agent_logistique" as UserRole });
   const [users, setUsers] = useState<AppUser[]>([]);
   const [settings, setSettings] = useState<GlobalSettings>({
@@ -162,6 +175,104 @@ export function AdminSettings() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+
+    setImporting(true);
+    setImportStats(null);
+    
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+        
+        if (data.length > 0) {
+          const columns = Object.keys(data[0] as any);
+          setAvailableColumns(columns);
+          setRawFileData(data);
+          
+          // Try to auto-map common names
+          const autoMap: any = { ...columnMapping };
+          const pairs = [
+            { field: 'name', keywords: ['nom', 'designation', 'libelle', 'appareil'] },
+            { field: 'category', keywords: ['categorie', 'famille', 'type', 'classe'] },
+            { field: 'zone', keywords: ['zone', 'service', 'localisation', 'centre'] },
+            { field: 'status', keywords: ['etat', 'statut', 'status', 'condition'] },
+            { field: 'station', keywords: ['station', 'bureau', 'poste', 'emplacement'] }
+          ];
+
+          pairs.forEach(pair => {
+            const found = columns.find(col => 
+              pair.keywords.some(k => col.toLowerCase().includes(k))
+            );
+            if (found) autoMap[pair.field] = found;
+          });
+
+          setColumnMapping(autoMap);
+          setImportStep('mapping');
+        } else {
+          toast.error("Le fichier est vide");
+        }
+        setImporting(false);
+      };
+      reader.readAsBinaryString(file);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erreur lors de la lecture du fichier");
+      setImporting(false);
+    }
+  };
+
+  const processImport = async () => {
+    if (!auth.currentUser || rawFileData.length === 0) return;
+    
+    setImporting(true);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      
+      // Transform data based on mapping
+      const formattedData = rawFileData.map((row: any) => ({
+        name: row[columnMapping.name] || "Bénéficiaire Inconnu",
+        category: row[columnMapping.category],
+        zone: row[columnMapping.zone],
+        status: row[columnMapping.status] || "fonctionnel",
+        station: row[columnMapping.station],
+        details: {
+          // You could add dynamic detail mapping here too
+          source: "Import Migration"
+        }
+      }));
+
+      const response = await fetch("/api/admin/import", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": auth.currentUser!.uid,
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ data: formattedData }),
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        setImportStats(result);
+        setImportStep('results');
+        toast.success(`Import terminé: ${result.imported}/${result.total} unités`);
+      } else {
+        toast.error(result.error);
+      }
+    } catch (e: any) {
+      toast.error("Erreur lors de l'envoi des données");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Helper functions for list management
   const addToList = (key: keyof GlobalSettings, item: any) => {
     setSettings(prev => ({ ...prev, [key]: [...prev[key], item] }));
@@ -201,7 +312,7 @@ export function AdminSettings() {
       </div>
 
       <Tabs defaultValue="logic" className="w-full">
-        <TabsList className="grid grid-cols-2 w-full max-w-md h-12 bg-white border border-border-custom p-1 mb-8">
+        <TabsList className="grid grid-cols-3 w-full max-w-xl h-12 bg-white border border-border-custom p-1 mb-8">
           <TabsTrigger value="logic" className="font-bold gap-2">
             <Settings2 size={16} />
             Logique Métier
@@ -209,6 +320,10 @@ export function AdminSettings() {
           <TabsTrigger value="users" className="font-bold gap-2">
             <Users size={16} />
             Utilisateurs & Accès
+          </TabsTrigger>
+          <TabsTrigger value="import" className="font-bold gap-2">
+            <FileSpreadsheet size={16} />
+            Importation
           </TabsTrigger>
         </TabsList>
 
@@ -467,6 +582,171 @@ export function AdminSettings() {
                   </div>
                </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="import" className="mt-0">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <Card className="lg:col-span-2 border-border-custom shadow-sm">
+              <CardHeader className="bg-[#fafbfc] border-b border-border-custom">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-50 text-green-600 rounded-lg"><Upload size={20} /></div>
+                  <div>
+                    <CardTitle className="text-base font-bold">Migration de Base Access (Intelligente)</CardTitle>
+                    <CardDescription className="text-xs">Uploadez votre fichier Excel. Notre assistant vous aidera à organiser les données désordonnées.</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-8">
+                {importStep === 'upload' && (
+                  <div className="border-2 border-dashed border-zinc-200 rounded-xl p-12 flex flex-col items-center justify-center text-center gap-4 hover:border-accent/40 hover:bg-accent/5 transition-all cursor-pointer relative">
+                    <input 
+                      type="file" 
+                      accept=".xlsx, .xls, .csv" 
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={handleFileUpload}
+                      disabled={importing}
+                    />
+                    {importing ? (
+                      <>
+                        <Loader2 size={48} className="text-accent animate-spin" />
+                        <p className="text-sm font-bold animate-pulse">Lecture du fichier...</p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center">
+                          <FileSpreadsheet size={32} />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-sm font-bold text-text-dark">Déposez votre fichier désordonné ici</p>
+                          <p className="text-xs text-muted-foreground">Nous allons vous aider à mapper les données.</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {importStep === 'mapping' && (
+                  <div className="space-y-6">
+                    <div className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 flex items-center justify-between">
+                      <p className="text-sm font-medium text-zinc-600">
+                        <span className="font-black text-accent">{rawFileData.length}</span> lignes détectées. Mappez vos colonnes :
+                      </p>
+                      <Button variant="ghost" size="sm" onClick={() => setImportStep('upload')} className="text-xs font-bold uppercase">Changer de fichier</Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {[
+                        { id: 'name', label: 'Nom / Désignation', req: true },
+                        { id: 'category', label: 'Catégorie', req: true },
+                        { id: 'zone', label: 'Zone / Service', req: true },
+                        { id: 'station', label: 'Station / Bureau', req: false },
+                        { id: 'status', label: 'État / Statut', req: false }
+                      ].map((field) => (
+                        <div key={field.id} className="space-y-2">
+                          <Label className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                            {field.label}
+                            {field.req && <span className="text-red-500">*</span>}
+                          </Label>
+                          <Select 
+                            value={columnMapping[field.id]} 
+                            onValueChange={(val) => setColumnMapping(prev => ({ ...prev, [field.id]: val }))}
+                          >
+                            <SelectTrigger className="bg-white border-border-custom h-10">
+                              <SelectValue placeholder="Choisir une colonne..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="non_mappe" className="text-muted-foreground italic">Ne pas mapper</SelectItem>
+                              {availableColumns.map(col => (
+                                <SelectItem key={col} value={col}>{col}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-6 border-t border-border-custom flex justify-end">
+                      <Button 
+                        onClick={processImport} 
+                        disabled={importing || !columnMapping.name || !columnMapping.category || !columnMapping.zone}
+                        className="bg-accent hover:bg-accent/90 text-white font-black px-10 h-11"
+                      >
+                        {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                        LANCER L'IMPORTATION NETTOYÉE
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {(importStep === 'results' && importStats) && (
+                  <div className="space-y-8 animate-in zoom-in-95 duration-300">
+                    <div className="text-center space-y-2">
+                      <div className="w-16 h-16 bg-success/10 text-success rounded-full flex items-center justify-center mx-auto mb-4">
+                        <CheckCircle2 size={32} />
+                      </div>
+                      <h3 className="text-xl font-black text-text-dark">Importation Terminée</h3>
+                      <p className="text-sm text-muted-foreground">Votre base de données HELIOS a été enrichie.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-success/5 border border-success/20 p-6 rounded-xl text-center">
+                        <p className="text-xs font-black uppercase tracking-widest text-success mb-1">Succès</p>
+                        <p className="text-4xl font-black text-success tracking-tighter">{importStats.imported}</p>
+                        <p className="text-[10px] text-success/60 font-medium">Lignes intégrées</p>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 p-6 rounded-xl text-center">
+                        <p className="text-xs font-black uppercase tracking-widest text-amber-600 mb-1">Échecs</p>
+                        <p className="text-4xl font-black text-amber-600 tracking-tighter">{importStats.total - importStats.imported}</p>
+                        <p className="text-[10px] text-amber-600/60 font-medium">Lignes rejetées</p>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-center">
+                      <Button variant="outline" onClick={() => setImportStep('upload')} className="font-bold border-zinc-200">
+                        Faire un nouvel import
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="space-y-6">
+              <Card className="border-border-custom shadow-sm bg-blue-50/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-blue-600" />
+                    Instructions de Format
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-xs text-zinc-600">
+                  <p className="font-bold underline">Plus besoin de renommer vos colonnes Access !</p>
+                  <p>L'assistant va scanner votre fichier et vous proposer de lier vos colonnes à nos champs. Même si vos noms sont différents (ex: "ID_Matériel" pour "Nom"), vous pourrez les associer manuellement.</p>
+                  <div className="p-3 bg-blue-100/50 rounded border border-blue-200">
+                    <p className="italic text-[10px]">Note: Le système effectue une "Reconnaissance Intelligente" (Fuzzy Match). Par exemple, "Rames" dans Excel sera automatiquement détecté comme "Rame" dans HELIOS.</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {importStats && importStats.errors.length > 0 && (
+                <Card className="border-red-200 shadow-sm bg-red-50/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs font-bold text-red-600 uppercase tracking-widest">Rapport d'erreurs</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2">
+                      {importStats.errors.map((error, idx) => (
+                        <li key={idx} className="text-[10px] flex gap-2 font-medium text-red-800">
+                          <span className="shrink-0">•</span>
+                          {error}
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </div>
         </TabsContent>
       </Tabs>
