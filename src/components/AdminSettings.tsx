@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { db, doc, getDoc, setDoc, collection, onSnapshot, updateDoc, auth, sendPasswordResetEmail } from "@/lib/firebase";
 import { GlobalSettings, AppUser, UserRole } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -7,17 +7,23 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, Save, Users, Settings2, MapPin, ShieldCheck, Mail, Key, UserPlus, Upload, FileSpreadsheet, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, Users, Settings2, MapPin, ShieldCheck, Mail, Key, UserPlus, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from 'xlsx';
 
-export function AdminSettings() {
+interface AdminSettingsProps {
+  isBypass?: boolean;
+}
+
+export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'results'>('upload');
+  const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'preview' | 'results'>('upload');
   const [rawFileData, setRawFileData] = useState<any[]>([]);
+  const [selectedRowIndices, setSelectedRowIndices] = useState<Set<number>>(new Set());
+  const [existingEquipmentNames, setExistingEquipmentNames] = useState<Set<string>>(new Set());
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({
     name: "",
@@ -26,7 +32,13 @@ export function AdminSettings() {
     status: "",
     station: ""
   });
+  const [importDefaults, setImportDefaults] = useState<Record<string, string>>({
+    category: "",
+    zone: "",
+    station: ""
+  });
   const [importStats, setImportStats] = useState<{ imported: number, total: number, errors: string[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [newUser, setNewUser] = useState({ email: "", password: "", displayName: "", role: "agent_logistique" as UserRole });
   const [users, setUsers] = useState<AppUser[]>([]);
   const [settings, setSettings] = useState<GlobalSettings>({
@@ -61,7 +73,7 @@ export function AdminSettings() {
             setSettings({
               categories: data.categories.map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
               zones: data.zones.map((z: any) => ({ id: z.id, label: z.name })),
-              stations: data.stations.map((s: any) => ({ id: s.id, label: s.name })),
+              stations: data.stations.map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
               roles: settings.roles // Keep existing roles defined in state
             });
           }
@@ -86,15 +98,20 @@ export function AdminSettings() {
   }, []);
 
   const handleSaveSettings = async () => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser && !isBypass) {
+      toast.error("Veuillez vous connecter pour enregistrer les paramètres.");
+      return;
+    }
     setSaving(true);
     try {
-      const idToken = await auth.currentUser.getIdToken();
+      const idToken = isBypass ? "demo-token" : await auth.currentUser!.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser!.uid;
+      
       const response = await fetch("/api/admin/config", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "x-user-uid": auth.currentUser.uid,
+          "x-user-uid": userUid,
           "Authorization": `Bearer ${idToken}`
         },
         body: JSON.stringify(settings),
@@ -103,10 +120,11 @@ export function AdminSettings() {
       if (response.ok) {
         toast.success("Configuration système mise à jour (PG + Firestore)");
       } else {
-        throw new Error("Erreur serveur");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Erreur serveur");
       }
-    } catch (error) {
-      toast.error("Échec de l'enregistrement");
+    } catch (error: any) {
+      toast.error(`Échec de l'enregistrement: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -127,10 +145,17 @@ export function AdminSettings() {
     
     setIsCreatingUser(true);
     try {
+      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      
       const response = await fetch("/api/admin/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...newUser, callerUid: auth.currentUser?.uid }),
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": userUid || "",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ ...newUser }),
       });
       
       const result = await response.json();
@@ -149,10 +174,16 @@ export function AdminSettings() {
     if (!confirm("Êtes-vous sûr de vouloir supprimer cet utilisateur ?")) return;
     
     try {
+      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      
       const response = await fetch(`/api/admin/users/${uid}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ callerUid: auth.currentUser?.uid }),
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": userUid || "",
+          "Authorization": `Bearer ${idToken}`
+        }
       });
       
       if (!response.ok) {
@@ -177,82 +208,164 @@ export function AdminSettings() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !auth.currentUser) return;
-
+    if (!file) return;
+    
+    console.log("📁 Fichier sélectionné:", file.name);
+    
     setImporting(true);
     setImportStats(null);
     
     try {
       const reader = new FileReader();
       reader.onload = async (evt) => {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
-        
-        if (data.length > 0) {
-          const columns = Object.keys(data[0] as any);
-          setAvailableColumns(columns);
-          setRawFileData(data);
+        try {
+          const dataBuffer = evt.target?.result as ArrayBuffer;
+          const wb = XLSX.read(dataBuffer, { type: 'buffer' });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          // Improved logic: detect the header row by searching for keywords
+          // This allows skipping generic titles or empty rows at the top of the file
+          const allRows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          let headerRowIndex = 0;
+          const headerKeywords = ['numero', 'nom', 'designation', 'libelle', 'appareil', 'poste', 'station', 'zone', 'service', 'categorie', 'statut', 'etat', 'electronique'];
           
-          // Try to auto-map common names
-          const autoMap: any = { ...columnMapping };
-          const pairs = [
-            { field: 'name', keywords: ['nom', 'designation', 'libelle', 'appareil'] },
-            { field: 'category', keywords: ['categorie', 'famille', 'type', 'classe'] },
-            { field: 'zone', keywords: ['zone', 'service', 'localisation', 'centre'] },
-            { field: 'status', keywords: ['etat', 'statut', 'status', 'condition'] },
-            { field: 'station', keywords: ['station', 'bureau', 'poste', 'emplacement'] }
-          ];
+          for (let i = 0; i < Math.min(allRows.length, 20); i++) {
+            const row = allRows[i];
+            if (row && Array.isArray(row) && row.some(cell => 
+              typeof cell === 'string' && headerKeywords.some(k => cell.toLowerCase().includes(k))
+            )) {
+              headerRowIndex = i;
+              break;
+            }
+          }
 
-          pairs.forEach(pair => {
-            const found = columns.find(col => 
-              pair.keywords.some(k => col.toLowerCase().includes(k))
-            );
-            if (found) autoMap[pair.field] = found;
-          });
+          console.log(`🔍 En-tête détecté à la ligne ${headerRowIndex + 1}`);
+          const data = XLSX.utils.sheet_to_json(ws, { range: headerRowIndex });
+          
+          if (data && data.length > 0) {
+            const columns = Object.keys(data[0] as any);
+            setAvailableColumns(columns);
+            setRawFileData(data);
+            
+            // Try to auto-map common names
+            const autoMap: any = { ...columnMapping };
+            const pairs = [
+              { field: 'name', keywords: ['numero', 'nom', 'designation', 'libelle', 'appareil'] },
+              { field: 'category', keywords: ['categorie', 'famille', 'type', 'classe'] },
+              { field: 'zone', keywords: ['zone', 'service', 'localisation', 'centre'] },
+              { field: 'status', keywords: ['etat', 'statut', 'status', 'condition'] },
+              { field: 'station', keywords: ['position', 'station', 'bureau', 'poste', 'emplacement'] }
+            ];
 
-          setColumnMapping(autoMap);
-          setImportStep('mapping');
-        } else {
-          toast.error("Le fichier est vide");
+            pairs.forEach(pair => {
+              const found = columns.find(col => 
+                pair.keywords.some(k => col.toLowerCase().includes(k))
+              );
+              if (found) autoMap[pair.field] = found;
+            });
+
+            setColumnMapping(autoMap);
+            setImportStep('mapping');
+          } else {
+            toast.error("Le fichier semble vide ou invalide");
+          }
+        } catch (readErr) {
+          console.error("XLSX Read Error:", readErr);
+          toast.error("Format de fichier non supporté ou corrompu");
+        } finally {
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setImporting(false);
         }
+      };
+      reader.onerror = () => {
+        toast.error("Erreur de lecture du fichier");
         setImporting(false);
       };
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     } catch (err) {
       console.error(err);
-      toast.error("Erreur lors de la lecture du fichier");
+      toast.error("Une erreur inattendue est survenue");
+      setImporting(false);
+    }
+  };
+
+  const goToPreview = async () => {
+    if (!columnMapping.name) {
+      toast.error("Veuillez mapper au moins la colonne 'Nom'");
+      return;
+    }
+    
+    // Fetch existing equipment to detect duplicates
+    setImporting(true);
+    try {
+      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const response = await fetch("/api/equipment", {
+        headers: {
+          "x-user-uid": userUid || "",
+          "Authorization": `Bearer ${idToken}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const names = new Set(data.map((item: any) => String(item.name).toLowerCase().trim()));
+        setExistingEquipmentNames(names);
+      }
+      
+      // Select all by default
+      setSelectedRowIndices(new Set(rawFileData.keys()));
+      setImportStep('preview');
+    } catch (e) {
+      console.error("Duplicate check error", e);
+      setImportStep('preview');
+    } finally {
       setImporting(false);
     }
   };
 
   const processImport = async () => {
-    if (!auth.currentUser || rawFileData.length === 0) return;
+    if (!auth.currentUser && !isBypass) {
+      toast.error("Session expirée. Veuillez vous reconnecter.");
+      return;
+    }
+    
+    if (selectedRowIndices.size === 0) {
+      toast.error("Aucune ligne sélectionnée pour l'importation.");
+      return;
+    }
     
     setImporting(true);
     try {
-      const idToken = await auth.currentUser!.getIdToken();
+      const idToken = isBypass ? "demo-token" : await auth.currentUser!.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser!.uid;
       
+      const selectedData = rawFileData.filter((_, idx) => selectedRowIndices.has(idx));
+
       // Transform data based on mapping
-      const formattedData = rawFileData.map((row: any) => ({
-        name: row[columnMapping.name] || "Bénéficiaire Inconnu",
-        category: row[columnMapping.category],
-        zone: row[columnMapping.zone],
-        status: row[columnMapping.status] || "fonctionnel",
-        station: row[columnMapping.station],
-        details: {
-          // You could add dynamic detail mapping here too
-          source: "Import Migration"
-        }
-      }));
+      const formattedData = selectedData.map((row: any) => {
+        // Create a copy of the row for details, excluding mapped main fields
+        const details: Record<string, string> = {};
+        Object.entries(row).forEach(([key, val]) => {
+          if (!Object.values(columnMapping).includes(key) && val) {
+            details[key] = String(val);
+          }
+        });
+
+        return {
+          name: row[columnMapping.name] || "Actif sans nom",
+          category: columnMapping.category && columnMapping.category !== "non_mappe" ? row[columnMapping.category] : importDefaults.category,
+          zone: columnMapping.zone && columnMapping.zone !== "non_mappe" ? row[columnMapping.zone] : importDefaults.zone,
+          station: columnMapping.station && columnMapping.station !== "non_mappe" ? row[columnMapping.station] : importDefaults.station,
+          status: columnMapping.status && columnMapping.status !== "non_mappe" ? row[columnMapping.status] : "fonctionnel",
+          details: details
+        };
+      });
 
       const response = await fetch("/api/admin/import", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "x-user-uid": auth.currentUser!.uid,
+          "x-user-uid": userUid,
           "Authorization": `Bearer ${idToken}`
         },
         body: JSON.stringify({ data: formattedData }),
@@ -282,10 +395,10 @@ export function AdminSettings() {
     setSettings(prev => ({ ...prev, [key]: prev[key].filter((item: any) => item.id !== id) }));
   };
 
-  const updateItemInList = (key: keyof GlobalSettings, id: string, label: string) => {
+  const updateItemInList = (key: keyof GlobalSettings, id: string, updates: Record<string, any>) => {
     setSettings(prev => ({
       ...prev,
-      [key]: prev[key].map((item: any) => item.id === id ? { ...item, label } : item)
+      [key]: prev[key].map((item: any) => item.id === id ? { ...item, ...updates } : item)
     }));
   };
 
@@ -345,7 +458,7 @@ export function AdminSettings() {
                   <div key={zone.id} className="flex gap-2 items-center">
                     <Input 
                       value={zone.label} 
-                      onChange={(e) => updateItemInList("zones", zone.id, e.target.value)}
+                      onChange={(e) => updateItemInList("zones", zone.id, { label: e.target.value })}
                       className="h-10 text-sm font-medium"
                     />
                     <Button variant="ghost" size="icon" onClick={() => removeFromList("zones", zone.id)} className="text-red-400 hover:text-red-600">
@@ -373,15 +486,36 @@ export function AdminSettings() {
               </CardHeader>
               <CardContent className="p-4 space-y-3">
                 {settings.stations.map((station) => (
-                  <div key={station.id} className="flex gap-2 items-center">
-                    <Input 
-                      value={station.label} 
-                      onChange={(e) => updateItemInList("stations", station.id, e.target.value)}
-                      className="h-10 text-sm font-medium"
-                    />
-                    <Button variant="ghost" size="icon" onClick={() => removeFromList("stations", station.id)} className="text-red-400 hover:text-red-600">
-                      <Trash2 size={16} />
-                    </Button>
+                  <div key={station.id} className="grid grid-cols-1 md:grid-cols-2 gap-2 p-3 bg-zinc-50 rounded-lg border border-zinc-100 group relative">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground ml-1">Nom du Bureau</Label>
+                      <Input 
+                        value={station.label} 
+                        onChange={(e) => updateItemInList("stations", station.id, { label: e.target.value })}
+                        className="h-9 text-sm font-medium bg-white"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground ml-1">Service Rattaché</Label>
+                      <div className="flex gap-2">
+                        <Select 
+                          value={station.zoneId || ""} 
+                          onValueChange={(val) => updateItemInList("stations", station.id, { zoneId: val })}
+                        >
+                          <SelectTrigger className="h-9 bg-white text-[11px] font-bold">
+                            <SelectValue placeholder="Choisir un Service" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {settings.zones.map(z => (
+                              <SelectItem key={z.id} value={z.id}>{z.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button variant="ghost" size="icon" onClick={() => removeFromList("stations", station.id)} className="text-red-400 hover:text-red-600 h-9 w-9 shrink-0">
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 ))}
                 <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider" onClick={() => addToList("stations", { id: `st_${Date.now()}`, label: "Nouveau Bureau" })}>
@@ -402,7 +536,7 @@ export function AdminSettings() {
                   <div key={cat.id} className="flex gap-2 items-center bg-zinc-50 p-2 rounded-lg border border-zinc-100">
                     <Input 
                       value={cat.label} 
-                      onChange={(e) => updateItemInList("categories", cat.id, e.target.value)}
+                      onChange={(e) => updateItemInList("categories", cat.id, { label: e.target.value })}
                       className="h-9 text-xs font-bold bg-white"
                     />
                     <Button variant="ghost" size="icon" onClick={() => removeFromList("categories", cat.id)} className="text-red-400 h-8 w-8">
@@ -599,11 +733,18 @@ export function AdminSettings() {
               </CardHeader>
               <CardContent className="p-8">
                 {importStep === 'upload' && (
-                  <div className="border-2 border-dashed border-zinc-200 rounded-xl p-12 flex flex-col items-center justify-center text-center gap-4 hover:border-accent/40 hover:bg-accent/5 transition-all cursor-pointer relative">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    onKeyDown={(e) => e.key === 'Enter' && fileInputRef.current?.click()}
+                    role="button"
+                    tabIndex={0}
+                    className="border-2 border-dashed border-zinc-200 rounded-xl p-12 flex flex-col items-center justify-center text-center gap-4 hover:border-accent/40 hover:bg-accent/5 focus:outline-none focus:ring-2 focus:ring-accent/20 transition-all cursor-pointer relative"
+                  >
                     <input 
+                      ref={fileInputRef}
                       type="file" 
                       accept=".xlsx, .xls, .csv" 
-                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      className="hidden"
                       onChange={handleFileUpload}
                       disabled={importing}
                     />
@@ -617,9 +758,14 @@ export function AdminSettings() {
                         <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center">
                           <FileSpreadsheet size={32} />
                         </div>
-                        <div className="space-y-1">
-                          <p className="text-sm font-bold text-text-dark">Déposez votre fichier désordonné ici</p>
-                          <p className="text-xs text-muted-foreground">Nous allons vous aider à mapper les données.</p>
+                        <div className="space-y-4">
+                          <div className="space-y-1">
+                            <p className="text-sm font-bold text-text-dark">Cliquez ici pour ouvrir votre fichier Access (Excel/CSV)</p>
+                            <p className="text-xs text-muted-foreground">Ou glissez-déposez le fichier dans cette zone.</p>
+                          </div>
+                          <Button variant="outline" size="sm" className="bg-white font-bold border-zinc-200">
+                            Choisir un fichier
+                          </Button>
                         </div>
                       </>
                     )}
@@ -627,54 +773,245 @@ export function AdminSettings() {
                 )}
 
                 {importStep === 'mapping' && (
-                  <div className="space-y-6">
-                    <div className="bg-zinc-50 p-4 rounded-lg border border-zinc-100 flex items-center justify-between">
-                      <p className="text-sm font-medium text-zinc-600">
-                        <span className="font-black text-accent">{rawFileData.length}</span> lignes détectées. Mappez vos colonnes :
-                      </p>
-                      <Button variant="ghost" size="sm" onClick={() => setImportStep('upload')} className="text-xs font-bold uppercase">Changer de fichier</Button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {[
-                        { id: 'name', label: 'Nom / Désignation', req: true },
-                        { id: 'category', label: 'Catégorie', req: true },
-                        { id: 'zone', label: 'Zone / Service', req: true },
-                        { id: 'station', label: 'Station / Bureau', req: false },
-                        { id: 'status', label: 'État / Statut', req: false }
-                      ].map((field) => (
-                        <div key={field.id} className="space-y-2">
-                          <Label className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-                            {field.label}
-                            {field.req && <span className="text-red-500">*</span>}
-                          </Label>
-                          <Select 
-                            value={columnMapping[field.id]} 
-                            onValueChange={(val) => setColumnMapping(prev => ({ ...prev, [field.id]: val }))}
-                          >
-                            <SelectTrigger className="bg-white border-border-custom h-10">
-                              <SelectValue placeholder="Choisir une colonne..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="non_mappe" className="text-muted-foreground italic">Ne pas mapper</SelectItem>
-                              {availableColumns.map(col => (
-                                <SelectItem key={col} value={col}>{col}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                    <div className="bg-zinc-100 p-5 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-white font-black">
+                          {rawFileData.length}
                         </div>
-                      ))}
+                        <p className="text-sm font-bold text-text-dark">
+                          Lignes détectées prêtes pour le traitement
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => setImportStep('upload')} className="text-[10px] font-black uppercase tracking-widest h-8 border-zinc-300 hover:bg-zinc-200 transition-colors">
+                        Changer de fichier
+                      </Button>
                     </div>
 
-                    <div className="pt-6 border-t border-border-custom flex justify-end">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="h-px bg-zinc-200 flex-1"></div>
+                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[3px]">Configuration du Mapping</span>
+                        <div className="h-px bg-zinc-200 flex-1"></div>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                        {[
+                          { id: 'name', label: 'Désignation de l\'Actif', req: true, desc: "Nom principal (ex: RAM 101)" },
+                          { id: 'category', label: 'Catégorie Système', req: true, desc: "Type de matériel" },
+                          { id: 'zone', label: 'Service / Localisation', req: true, desc: "Zone de déploiement" },
+                          { id: 'station', label: 'Position / Bureau', req: false, desc: "Optionnel" },
+                          { id: 'status', label: 'État Actuel', req: false, desc: "Converti en standard Helios" }
+                        ].map((field) => (
+                          <div key={field.id} className="space-y-4 group p-4 border border-transparent hover:border-zinc-100 hover:bg-zinc-50/50 rounded-xl transition-all">
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-end">
+                                <Label className="text-[11px] font-black uppercase tracking-wider text-text-dark/80 flex items-center gap-2">
+                                  {field.label}
+                                  {field.req && <span className="text-brand-orange animate-pulse">*</span>}
+                                </Label>
+                                <span className="text-[9px] font-bold text-zinc-400 italic">{field.desc}</span>
+                              </div>
+                              <Select 
+                                value={columnMapping[field.id]} 
+                                onValueChange={(val) => setColumnMapping(prev => ({ ...prev, [field.id]: val }))}
+                              >
+                                <SelectTrigger className="bg-white border-zinc-300 h-12 focus:ring-accent/30 font-bold text-sm shadow-none transition-shadow hover:border-zinc-400">
+                                  <SelectValue placeholder="Sélectionner la colonne correspondante..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="non_mappe" className="text-zinc-400 italic">Non présent dans le fichier (Valeur par défaut)</SelectItem>
+                                  {availableColumns.map(col => (
+                                    <SelectItem key={col} value={col} className="font-bold">{col}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            {(columnMapping[field.id] === "" || columnMapping[field.id] === "non_mappe") && (field.id === 'category' || field.id === 'zone' || field.id === 'station') && (
+                              <div className="animate-in slide-in-from-top-2 duration-300 space-y-2 bg-white/60 p-3 rounded-lg border border-dashed border-zinc-200">
+                                <p className="text-[9px] font-black text-accent uppercase tracking-widest flex items-center gap-2">
+                                  <ChevronRight size={10} /> Définir par défaut pour tout le fichier
+                                </p>
+                                <Select 
+                                  value={importDefaults[field.id]} 
+                                  onValueChange={(val) => setImportDefaults(prev => ({ ...prev, [field.id]: val }))}
+                                >
+                                  <SelectTrigger className="h-9 text-xs font-bold bg-transparent border-zinc-200">
+                                    <SelectValue placeholder={`Choisir ${field.label.toLowerCase()}...`} />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {field.id === 'category' && settings.categories.map(c => (
+                                      <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                                    ))}
+                                    {field.id === 'zone' && settings.zones.map(z => (
+                                      <SelectItem key={z.id} value={z.id}>{z.label}</SelectItem>
+                                    ))}
+                                    {field.id === 'station' && settings.stations.map(s => (
+                                      <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-zinc-200 flex flex-col items-center gap-4">
+                      <Button 
+                        onClick={goToPreview} 
+                        disabled={importing || !columnMapping.name || !columnMapping.category || !columnMapping.zone}
+                        className="w-full max-w-sm bg-accent hover:bg-accent/90 text-white font-bold px-12 h-12 text-sm tracking-[1px] shadow-sm transition-all duration-300 active:scale-95 border-none"
+                      >
+                        {importing ? (
+                          <div className="flex items-center gap-3">
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <span>CHARGEMENT DE L'APERÇU...</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <Save className="w-5 h-5" />
+                            <span>VÉRIFIER ET CHOISIR LES LIGNES</span>
+                          </div>
+                        )}
+                      </Button>
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                        <ShieldCheck size={12} className="text-zinc-300" />
+                        Traitement sécurisé et vérification des doublons
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {importStep === 'preview' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                    <div className="flex justify-between items-center bg-zinc-50 p-4 rounded-xl border border-border-custom">
+                      <div className="flex items-center gap-4">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-text-dark">Sélection des données</span>
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                            {selectedRowIndices.size} / {rawFileData.length} lignes sélectionnées
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => {
+                            if (selectedRowIndices.size === rawFileData.length) {
+                              setSelectedRowIndices(new Set());
+                            } else {
+                              setSelectedRowIndices(new Set(rawFileData.keys()));
+                            }
+                          }}
+                          className="text-[10px] font-black uppercase tracking-widest h-8"
+                        >
+                          {selectedRowIndices.size === rawFileData.length ? "Tout désélectionner" : "Tout sélectionner"}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setImportStep('mapping')} className="text-[10px] font-black uppercase tracking-widest h-8">
+                          Retour au Mapping
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="border border-border-custom rounded-xl overflow-hidden shadow-sm">
+                      <div className="max-h-[500px] overflow-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="sticky top-0 bg-[#f8fafc] z-10 border-b border-border-custom">
+                            <tr>
+                              <th className="px-4 py-3 w-10"></th>
+                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Désignation</th>
+                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Catégorie</th>
+                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Zone</th>
+                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest text-right">Statut</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rawFileData.map((row, idx) => {
+                              const name = row[columnMapping.name];
+                              const isDuplicate = existingEquipmentNames.has(String(name).toLowerCase().trim());
+                              const isSelected = selectedRowIndices.has(idx);
+                              
+                              return (
+                                <tr 
+                                  key={idx} 
+                                  className={`border-b border-border-custom transition-colors hover:bg-zinc-50 ${isDuplicate ? 'bg-amber-50/50' : ''}`}
+                                >
+                                  <td className="px-4 py-3">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        const next = new Set(selectedRowIndices);
+                                        if (isSelected) next.delete(idx);
+                                        else next.add(idx);
+                                        setSelectedRowIndices(next);
+                                      }}
+                                      className="w-4 h-4 rounded border-zinc-300 text-accent focus:ring-accent"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-bold text-text-dark flex items-center gap-2">
+                                        {name}
+                                        {isDuplicate && (
+                                          <span className="bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">
+                                            DOUBLON POSSIBLE
+                                          </span>
+                                        )}
+                                      </span>
+                                      <span className="text-[10px] text-zinc-400 font-medium">Ligne {idx + 1}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.category]}</td>
+                                  <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.zone]}</td>
+                                  <td className="px-4 py-3 text-right">
+                                    <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded">
+                                      {row[columnMapping.status] || "Fonctionnel"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="pt-6 flex flex-col items-center gap-4">
+                      {existingEquipmentNames.size > 0 && selectedRowIndices.size > 0 && Array.from(selectedRowIndices).some(idx => existingEquipmentNames.has(String(rawFileData[idx][columnMapping.name]).toLowerCase().trim())) && (
+                        <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-lg border border-amber-100 mb-2">
+                          <AlertCircle size={16} />
+                          <p className="text-[10px] font-bold uppercase tracking-wider">
+                            Attention : Certaines lignes sélectionnées semblent être des doublons.
+                          </p>
+                        </div>
+                      )}
+
                       <Button 
                         onClick={processImport} 
-                        disabled={importing || !columnMapping.name || !columnMapping.category || !columnMapping.zone}
-                        className="bg-accent hover:bg-accent/90 text-white font-black px-10 h-11"
+                        disabled={importing || selectedRowIndices.size === 0}
+                        className="w-full max-w-sm bg-brand-orange hover:bg-[#e66000] text-white font-bold px-12 h-12 text-sm tracking-[1px] shadow-sm transition-all duration-300 active:scale-95 border-none"
                       >
-                        {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                        LANCER L'IMPORTATION NETTOYÉE
+                        {importing ? (
+                          <div className="flex items-center gap-3">
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <span>IMPORTATION EN COURS...</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <Save className="w-5 h-5" />
+                            <span>LANCER L'IMPORTATION ({selectedRowIndices.size})</span>
+                          </div>
+                        )}
                       </Button>
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                        <ShieldCheck size={12} className="text-zinc-300" />
+                        Seules les lignes sélectionnées seront ajoutées au parc
+                      </p>
                     </div>
                   </div>
                 )}

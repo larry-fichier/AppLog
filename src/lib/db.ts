@@ -13,6 +13,15 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
+// IMPORTANT: Add a global error handler to the pool to prevent process crash
+// or unhandled rejections on background connection issues.
+pool.on('error', (err) => {
+  console.error('[DB] Unexpected error on idle client or connection issue:', err.message);
+  if (err.message.includes('ECONNREFUSED')) {
+    console.warn('[DB] Database appears to be offline. Verify PGHOST/PGPORT settings.');
+  }
+});
+
 /**
  * Execute a query with the helios context set for RLS (Row Level Security)
  */

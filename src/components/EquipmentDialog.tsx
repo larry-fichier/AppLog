@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import React from "react";
 import { toast } from "sonner";
-import { Loader2, Trash2, Box, Info } from "lucide-react";
+import { Loader2, Trash2, Box, Info, Save } from "lucide-react";
 import { db, auth, addDoc, collection, doc, getDoc, updateDoc, deleteDoc, OperationType, handleFirestoreError } from "@/lib/firebase";
 import { Equipment, EquipmentCategory, EquipmentStatus, EquipmentDetails, GlobalSettings } from "@/types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -16,6 +16,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   item?: Equipment;
   activeRole?: string;
+  isBypass?: boolean;
 }
 
 const categoryLabels = {
@@ -25,7 +26,7 @@ const categoryLabels = {
   groupe: "Groupe"
 };
 
-export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_logistique" }: Props) {
+export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_logistique", isBypass = false }: Props) {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("general");
   const [dynamicSettings, setDynamicSettings] = useState<GlobalSettings | null>(null);
@@ -98,7 +99,7 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser) {
+    if (!auth.currentUser && !isBypass) {
       toast.error("Veuillez vous connecter pour effectuer cette action.");
       return;
     }
@@ -110,7 +111,8 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
 
     setLoading(true);
     try {
-      const idToken = await auth.currentUser.getIdToken();
+      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
       
       const payload = {
         name,
@@ -127,7 +129,7 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
         method: item?.id ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-user-uid": auth.currentUser.uid,
+          "x-user-uid": userUid || "",
           "Authorization": `Bearer ${idToken}`
         },
         body: JSON.stringify(payload)
@@ -148,19 +150,21 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
   };
 
   const handleDelete = async () => {
-    if (!item?.id || !auth.currentUser) return;
+    if (!item?.id || (!auth.currentUser && !isBypass)) return;
     
     setLoading(true);
     try {
-      const idToken = await auth.currentUser.getIdToken();
+      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      
       const response = await fetch(`/api/equipment/${item.id}`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "x-user-uid": auth.currentUser.uid,
+          "x-user-uid": userUid || "",
           "Authorization": `Bearer ${idToken}`
         },
-        body: JSON.stringify({ callerUid: auth.currentUser.uid })
+        body: JSON.stringify({ callerUid: userUid })
       });
 
       if (response.ok) {
@@ -480,20 +484,41 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
               </Tabs>
             </div>
 
-            <DialogFooter className="p-6 bg-[#fafbfc] border-t border-border-custom flex justify-between gap-4">
+            <DialogFooter className="p-6 bg-zinc-50 border-t border-border-custom flex items-center justify-between gap-4">
               {item && !isReadOnly && canDelete && (
-                <Button type="button" variant="ghost" onClick={() => setShowDeleteConfirm(true)} disabled={loading} className="text-red-500 hover:bg-red-50 hover:text-red-600">
-                  <Trash2 size={16} className="mr-2" />
-                  Supprimer l'actif
+                <Button 
+                  type="button" 
+                  variant="ghost" 
+                  onClick={() => setShowDeleteConfirm(true)} 
+                  disabled={loading} 
+                  className="text-red-500 hover:bg-red-50 hover:text-red-600 font-bold text-xs"
+                >
+                  <Trash2 size={14} className="mr-2" />
+                  Supprimer
                 </Button>
               )}
-              <div className="flex gap-2 ml-auto">
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading} className="border-border-custom font-semibold">
+              <div className="flex gap-3 ml-auto">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => onOpenChange(false)} 
+                  disabled={loading} 
+                  className="border-zinc-300 font-bold text-xs shadow-sm hover:bg-white"
+                >
                   {isReadOnly ? "Fermer" : "Annuler"}
                 </Button>
                 {!isReadOnly && (
-                  <Button type="submit" disabled={loading} className="bg-accent hover:bg-accent/90 text-white font-bold min-w-[120px]">
-                    {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : item ? "Enregistrer" : "Créer l'unité"}
+                  <Button 
+                    type="submit" 
+                    disabled={loading} 
+                    className="bg-brand-orange hover:bg-[#e66000] text-white font-bold px-8 h-10 text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 border-none min-w-[140px]"
+                  >
+                    {loading ? (
+                      <Loader2 size={16} className="mr-2 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4 mr-2" />
+                    )}
+                    {item ? "METTRE À JOUR" : "CRÉER L'UNITÉ"}
                   </Button>
                 )}
               </div>

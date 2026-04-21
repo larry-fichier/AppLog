@@ -36,9 +36,14 @@ const statusConfig = {
 interface Props {
   defaultCategory?: string;
   activeRole?: "csph" | "chef_service_administratif" | "agent_logistique" | "chef_bureau_logistique" | "admin";
+  isBypass?: boolean;
 }
 
-export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agent_logistique" }: Props) {
+export function EquipmentDashboard({ 
+  defaultCategory = "all", 
+  activeRole = "agent_logistique",
+  isBypass = false 
+}: Props) {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -67,14 +72,16 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
 
   useEffect(() => {
     async function fetchData() {
-      if (!auth.currentUser) return;
+      if (!auth.currentUser && !isBypass) return;
       
       setLoading(true);
       try {
-        const idToken = await auth.currentUser.getIdToken();
+        const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
+        const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+        
         const response = await fetch("/api/equipment", {
           headers: {
-            "x-user-uid": auth.currentUser.uid,
+            "x-user-uid": userUid || "",
             "Authorization": `Bearer ${idToken}`
           }
         });
@@ -124,9 +131,17 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
       cuisine: equipment.filter(e => e.category === "cuisine").length,
       electronique: equipment.filter(e => e.category === "electronique").length,
       groupe: equipment.filter(e => e.category === "groupe").length,
-    },
-    avgMileage: activeCategory === "rame" ? Math.round(equipment.filter(e => e.category === "rame").reduce((acc, curr) => acc + (curr.details.mileage || 0), 0) / (equipment.filter(e => e.category === "rame").length || 1)) : 0,
+    } as Record<string, number>,
+    avgMileage: activeCategory === "rame" ? Math.round(equipment.filter(e => e.category === "rame").reduce((acc, curr) => acc + (Number(curr.details?.mileage) || 0), 0) / (equipment.filter(e => e.category === "rame").length || 1)) : 0,
     activeRames: equipment.filter(e => e.category === "rame" && e.status === "fonctionnel").length
+  };
+
+  const getStatusConfig = (status: string) => {
+    return statusConfig[status as keyof typeof statusConfig] || { 
+      label: status || "Inconnu", 
+      color: "text-zinc-500 bg-zinc-100 border-zinc-200", 
+      icon: <Box className="w-3 h-3 mr-1" /> 
+    };
   };
 
   const seedData = async () => {
@@ -476,18 +491,18 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
 
                       {activeCategory !== "rame" && (
                         <TableCell className="px-6 py-5">
-                          <div className={`inline-flex items-center px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-[1.5px] border ${statusConfig[item.status].color}`}>
-                            {statusConfig[item.status].icon}
-                            {statusConfig[item.status].label}
+                          <div className={`inline-flex items-center px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-[1.5px] border ${getStatusConfig(item.status).color}`}>
+                            {getStatusConfig(item.status).icon}
+                            {getStatusConfig(item.status).label}
                           </div>
                         </TableCell>
                       )}
                       
                       {activeCategory === "rame" && (
                         <TableCell className="px-6 py-5">
-                          <div className={`inline-flex items-center px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-[1.5px] border ${statusConfig[item.status].color}`}>
-                            {statusConfig[item.status].icon}
-                            {statusConfig[item.status].label}
+                          <div className={`inline-flex items-center px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-[1.5px] border ${getStatusConfig(item.status).color}`}>
+                            {getStatusConfig(item.status).icon}
+                            {getStatusConfig(item.status).label}
                           </div>
                         </TableCell>
                       )}
@@ -525,6 +540,7 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
         onOpenChange={setIsDialogOpen} 
         item={editingItem} 
         activeRole={activeRole}
+        isBypass={isBypass}
       />
     </div>
   );

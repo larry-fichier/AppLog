@@ -204,9 +204,9 @@ export default function App() {
                   <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent font-bold">
                      {(user?.email || "D").substring(0, 1).toUpperCase()}
                   </div>
-                  <div className="flex flex-col pr-4 border-r border-border-custom text-right">
-                    <span className="text-[10px] font-bold text-[#b2bec3] uppercase tracking-tighter">
-                      {dynamicSettings?.roles.find(r => r.id === currentRole)?.label || "Accès Standard"}
+                    <div className="flex flex-col pr-4 border-r border-border-custom text-right">
+                    <span className="text-[10px] font-bold text-[#b2bec3] uppercase tracking-[1px]">
+                      {dynamicSettings?.roles?.find((r: any) => r.id === (isBypass ? "chef_bureau_logistique" : currentRole))?.label || (isBypass ? "Administrateur" : "Accès Standard")}
                     </span>
                     <span className="text-sm font-bold text-text-dark leading-tight">{userDisplayName}</span>
                   </div>
@@ -217,9 +217,10 @@ export default function App() {
               </header>
               <div className="flex-1 min-h-0">
                 {activeMenu === "settings" && isAdmin ? (
-                  <AdminSettings />
+                  <AdminSettings isBypass={isBypass} />
                 ) : (
                   <EquipmentDashboard 
+                    isBypass={isBypass}
                     activeRole={currentRole as any}
                     defaultCategory={activeMenu === "dashboard" ? "all" : activeMenu === "fleet" ? "rame" : activeMenu === "catering" ? "cuisine" : activeMenu === "digital" ? "electronique" : "groupe"} 
                   />
@@ -316,10 +317,11 @@ export default function App() {
                        <button
                          type="button"
                          onClick={() => {
-                           setIsBypass(true);
+                           setLoading(false);
+                            setIsBypass(true);
                            toast.success("Mode démonstration activé. Bienvenue !");
                          }}
-                         className="text-[10px] font-black text-white bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-full transition-all uppercase tracking-[2px] shadow-lg shadow-orange-500/20"
+                         className="text-[10px] font-bold text-white bg-orange-500 hover:bg-orange-600 px-6 py-2.5 rounded-full transition-all uppercase tracking-[2px] shadow-sm hover:shadow-md active:scale-95 focus:outline-none"
                        >
                          ⚡ ACCÈS DIRECT SANS COMPTE
                        </button>
