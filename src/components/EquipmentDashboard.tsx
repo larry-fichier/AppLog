@@ -66,17 +66,33 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
   }, [defaultCategory]);
 
   useEffect(() => {
-    const q = query(collection(db, "equipment"), orderBy("createdAt", "desc"));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Equipment));
-      setEquipment(docs);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, "equipment");
-    });
+    async function fetchData() {
+      if (!auth.currentUser) return;
+      
+      setLoading(true);
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const response = await fetch("/api/equipment", {
+          headers: {
+            "x-user-uid": auth.currentUser.uid,
+            "Authorization": `Bearer ${idToken}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setEquipment(data);
+        }
+      } catch (e) {
+        console.error("Fetch error", e);
+      } finally {
+        setLoading(false);
+      }
+    }
 
-    return () => unsubscribe();
+    fetchData();
+    // Refresh periodically or on focus
+    const interval = setInterval(fetchData, 30000); // 30s refresh
+    return () => clearInterval(interval);
   }, []);
 
   const filteredEquipment = equipment.filter(item => {
@@ -244,27 +260,27 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
         {/* Navigation Sidebar */}
         <div className="space-y-6">
           <div className="bg-white rounded-lg border border-border-custom shadow-sm overflow-hidden">
-             <div className="px-4 py-3 bg-[#fafbfc] border-b border-border-custom font-bold text-[13px] text-text-dark flex items-center justify-between">
-                <span>SEGMENTATION</span>
-                <Filter size={14} className="text-accent" />
+             <div className="px-5 py-4 bg-zinc-50 border-b border-border-custom flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-[2.5px] text-text-dark/50">Segmentation</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-accent" />
              </div>
-              <div className="p-2 flex flex-col gap-1">
+              <div className="p-3 flex flex-col gap-1.5">
                 <button 
                   onClick={() => setActiveCategory("all")}
-                  className={`group flex items-center justify-between px-3 py-2.5 rounded-md text-[13px] transition-all ${
+                  className={`group flex items-center justify-between px-3 py-2.5 rounded-md text-[13px] transition-all duration-300 border ${
                     activeCategory === "all" 
-                    ? 'bg-accent text-white shadow-lg shadow-accent/20' 
-                    : 'hover:bg-[#f1f2f6] text-text-dark'
+                    ? 'bg-brand-orange text-white border-brand-orange shadow-md' 
+                    : 'hover:bg-zinc-50 text-text-dark/80 hover:text-text-dark border-transparent'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className={activeCategory === "all" ? 'text-white' : 'text-[#7f8c8d]'}>
+                    <span className={activeCategory === "all" ? 'text-white' : 'text-brand-orange'}>
                       <Archive size={16} />
                     </span>
-                    <span className="font-bold">Tous les actifs</span>
+                    <span className="font-bold">Vue Globale</span>
                   </div>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
-                    activeCategory === "all" ? 'bg-white/20 text-white' : 'bg-[#f1f2f6] text-[#7f8c8d]'
+                  <span className={`text-[10px] px-2 py-0.5 rounded-sm font-black ${
+                    activeCategory === "all" ? 'bg-white/10 text-white' : 'bg-zinc-100 text-[#7f8c8d]'
                   }`}>
                     {stats.total}
                   </span>
@@ -279,20 +295,20 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
                   <button 
                     key={cat.id}
                     onClick={() => setActiveCategory(cat.id)}
-                    className={`group flex items-center justify-between px-3 py-2.5 rounded-md text-[13px] transition-all ${
+                    className={`group flex items-center justify-between px-3 py-2.5 rounded-md text-[13px] transition-all duration-300 border ${
                       activeCategory === cat.id 
-                      ? 'bg-accent text-white shadow-lg shadow-accent/20' 
-                      : 'hover:bg-[#f1f2f6] text-text-dark'
+                      ? 'bg-brand-orange text-white border-brand-orange shadow-md' 
+                      : 'hover:bg-zinc-50 text-text-dark/80 hover:text-text-dark border-transparent'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <span className={activeCategory === cat.id ? 'text-white' : 'text-[#7f8c8d]'}>
+                      <span className={activeCategory === cat.id ? 'text-white' : 'text-brand-orange'}>
                         {categoryIcons[cat.id as keyof typeof categoryIcons] || <Box size={16} />}
                       </span>
-                      <span className="font-bold">{cat.label.split(' ')[0]}</span>
+                      <span className="font-bold">{cat.label}</span>
                     </div>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
-                      activeCategory === cat.id ? 'bg-white/20 text-white' : 'bg-[#f1f2f6] text-[#7f8c8d]'
+                    <span className={`text-[10px] px-2 py-0.5 rounded-sm font-black ${
+                      activeCategory === cat.id ? 'bg-white/10 text-white' : 'bg-zinc-100 text-[#7f8c8d]'
                     }`}>
                       {stats.categoryCounts[cat.id] || 0}
                     </span>
@@ -301,19 +317,25 @@ export function EquipmentDashboard({ defaultCategory = "all", activeRole = "agen
               </div>
           </div>
 
-          <div className="bg-accent rounded-lg p-5 text-white shadow-xl shadow-accent/10 flex flex-col gap-4">
-             <div className="space-y-1">
-                <h4 className="font-black text-sm uppercase tracking-wider">Nouvelle Saisie</h4>
-                <p className="text-[11px] opacity-80 leading-relaxed">Ajoutez une unité physique à l'inventaire logistique du parc.</p>
+          <div className="bg-white rounded-lg p-5 border border-border-custom shadow-sm flex flex-col gap-5 group hover:border-brand-orange/40 transition-colors duration-300">
+             <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-brand-orange animate-pulse" />
+                  <h4 className="font-black text-[13px] uppercase tracking-[2px] text-text-dark">Nouvelle Saisie</h4>
+                </div>
+                <p className="text-[11px] font-medium text-[#7f8c8d] leading-relaxed">Ajoutez une unité physique à l'inventaire logistique du parc avec une indexation immédiate.</p>
              </div>
              {(activeRole === "agent_logistique" || activeRole === "chef_bureau_logistique" || activeRole === "admin") ? (
-               <Button className="w-full bg-white text-accent hover:bg-white/90 font-black h-11 border-none shadow-md" onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }}>
+               <Button 
+                className="w-full bg-text-dark text-white hover:bg-brand-orange font-black h-11 border-none shadow-lg shadow-text-dark/10 transition-all duration-300 group-hover:-translate-y-0.5" 
+                onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }}
+               >
                   <Plus className="w-4 h-4 mr-2" />
-                  DÉCLARER ACTIF
+                  DÉCLARER UN ACTIF
                </Button>
              ) : (
-               <div className="text-[10px] font-bold bg-white/10 p-3 rounded-lg border border-white/20 text-center uppercase tracking-widest">
-                  Accès Consultation Uniquement
+               <div className="text-[9px] font-black bg-zinc-50 p-3 rounded-lg border border-dashed border-border-custom text-center uppercase tracking-[2px] text-[#bdc3c7]">
+                  Lecture seule : CSPH / CSA
                </div>
              )}
           </div>

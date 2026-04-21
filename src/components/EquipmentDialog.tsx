@@ -48,9 +48,16 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
   useEffect(() => {
     async function fetchSettings() {
       try {
-        const snap = await getDoc(doc(db, "config", "global"));
-        if (snap.exists()) {
-          setDynamicSettings(snap.data() as GlobalSettings);
+        const response = await fetch("/api/config");
+        if (response.ok) {
+          const data = await response.json();
+          // Map PG data to the settings format expected by the dialog
+          setDynamicSettings({
+            categories: data.categories.map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+            zones: data.zones.map((z: any) => ({ id: z.id, label: z.name })),
+            stations: data.stations.map((s: any) => ({ id: s.id, label: s.name })),
+            roles: [] // Not needed here
+          });
         }
       } catch (e) {
         console.error("Error fetching settings in dialog", e);
@@ -103,49 +110,68 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
 
     setLoading(true);
     try {
-      const now = new Date().toISOString();
+      const idToken = await auth.currentUser.getIdToken();
+      
       const payload = {
         name,
-        category,
+        category_id: category, // In PG, category is an ID
         status,
-        arrivalDate: arrivalDate || null,
-        departureDate: departureDate || null,
-        location,
+        zone_id: location.zone || "Zone 1", 
+        station_id: location.station || "Station 1",
+        service_id: location.service || null,
+        bureau_id: location.office || null,
         details,
-        updatedAt: now,
       };
 
-      if (item?.id) {
-        await updateDoc(doc(db, "equipment", item.id), payload);
-        toast.success("Équipement mis à jour avec succès");
+      const response = await fetch("/api/equipment" + (item?.id ? `/${item.id}` : ""), {
+        method: item?.id ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-uid": auth.currentUser.uid,
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        toast.success(item?.id ? "Équipement mis à jour" : "Équipement ajouté");
+        onOpenChange(false);
       } else {
-        await addDoc(collection(db, "equipment"), {
-          ...payload,
-          createdAt: now,
-          createdBy: auth.currentUser?.uid
-        });
-        toast.success("Équipement ajouté avec succès");
+        const err = await response.json();
+        throw new Error(err.error || "Erreur serveur");
       }
-      onOpenChange(false);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, "equipment");
-      toast.error("Une erreur est survenue.");
+    } catch (error: any) {
+      toast.error(error.message || "Une erreur est survenue.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!item?.id) return;
+    if (!item?.id || !auth.currentUser) return;
     
     setLoading(true);
     try {
-      await deleteDoc(doc(db, "equipment", item.id));
-      toast.success("Équipement supprimé de la base de données");
-      onOpenChange(false);
-    } catch (error) {
-       handleFirestoreError(error, OperationType.DELETE, "equipment");
-       toast.error("Erreur lors de la suppression");
+      const idToken = await auth.currentUser.getIdToken();
+      const response = await fetch(`/api/equipment/${item.id}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-uid": auth.currentUser.uid,
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ callerUid: auth.currentUser.uid })
+      });
+
+      if (response.ok) {
+        toast.success("Équipement supprimé");
+        onOpenChange(false);
+      } else {
+        const err = await response.json();
+        throw new Error(err.error || "Erreur lors de la suppression");
+      }
+    } catch (error: any) {
+       toast.error(error.message);
     } finally {
       setLoading(false);
     }

@@ -130,7 +130,7 @@ export default function App() {
           <aside className="w-64 bg-sidebar-bg text-text-light flex flex-col py-8 shrink-0 z-50">
             <div className="px-8 pb-10 mb-8 border-b border-white/5">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-accent rounded-lg flex items-center justify-center font-black text-white text-xl shadow-lg shadow-accent/20">H</div>
+                <div className="w-10 h-10 bg-brand-orange rounded-lg flex items-center justify-center font-black text-white text-xl shadow-md transition-transform hover:scale-105 duration-300">H</div>
                 <div className="flex flex-col">
                   <div className="text-xl font-black tracking-[2px] text-white">HELIOS</div>
                   <div className="text-[8px] font-bold text-white/30 tracking-widest uppercase">Gestion Logistique</div>
@@ -141,7 +141,7 @@ export default function App() {
             <nav className="flex flex-col flex-1 px-4 gap-1">
               <button 
                 onClick={() => setActiveMenu("dashboard")}
-                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "dashboard" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "dashboard" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
               >
                 <LayoutDashboard size={18} />
                 <span>Vue d'ensemble</span>
@@ -149,7 +149,7 @@ export default function App() {
               
               <button 
                 onClick={() => setActiveMenu("fleet")}
-                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "fleet" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "fleet" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
               >
                 <Car size={18} />
                 <span>Parc Automobile</span>
@@ -157,7 +157,7 @@ export default function App() {
 
               <button 
                 onClick={() => setActiveMenu("catering")}
-                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "catering" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "catering" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
               >
                 <Utensils size={18} />
                 <span>Unités de Restauration</span>
@@ -165,7 +165,7 @@ export default function App() {
 
               <button 
                 onClick={() => setActiveMenu("digital")}
-                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "digital" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "digital" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
               >
                 <Laptop size={18} />
                 <span>Actifs Numériques</span>
@@ -173,7 +173,7 @@ export default function App() {
 
               <button 
                 onClick={() => setActiveMenu("energy")}
-                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "energy" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "energy" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
               >
                 <Zap size={18} />
                 <span>Énergie & Groupes</span>
@@ -183,19 +183,12 @@ export default function App() {
                 {isAdmin && (
                   <button 
                     onClick={() => setActiveMenu("settings")}
-                    className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold ${activeMenu === "settings" ? "bg-accent text-white shadow-lg shadow-accent/20" : "hover:bg-white/5 text-white/70 hover:text-white"}`}
+                    className={`px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${activeMenu === "settings" ? "bg-brand-orange text-white border-brand-orange shadow-md" : "hover:bg-white/5 text-white/70 hover:text-white border-transparent"}`}
                   >
                     <SettingsIcon size={18} className={activeMenu === "settings" ? "opacity-100" : "opacity-40"} />
-                    <span>Configuration Super User</span>
+                    <span>Configuration</span>
                   </button>
                 )}
-                <button 
-                  onClick={() => isBypass ? setIsBypass(false) : handleLogout()} 
-                  className="px-5 py-3.5 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer hover:bg-red-500/10 text-red-400/70 hover:text-red-400 transition-all text-left group"
-                >
-                  <LogOut size={18} className="opacity-40 group-hover:opacity-100" />
-                  <span>Quitter la Session</span>
-                </button>
               </div>
             </nav>
           </aside>

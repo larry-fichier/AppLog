@@ -40,11 +40,18 @@ export function AdminSettings() {
     // Fetch Settings
     async function fetchSettings() {
       try {
-        const settingsDoc = await getDoc(doc(db, "config", "global"));
-        if (settingsDoc.exists()) {
-          setSettings(settingsDoc.data() as GlobalSettings);
-        } else {
-          await setDoc(doc(db, "config", "global"), settings);
+        const response = await fetch("/api/config");
+        if (response.ok) {
+          const data = await response.json();
+          // Map PG categories to the settings state structure
+          if (data.categories.length > 0) {
+            setSettings({
+              categories: data.categories.map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+              zones: data.zones.map((z: any) => ({ id: z.id, label: z.name })),
+              stations: data.stations.map((s: any) => ({ id: s.id, label: s.name })),
+              roles: settings.roles // Keep existing roles defined in state
+            });
+          }
         }
       } catch (error) {
         console.error("Error fetching settings", error);
@@ -54,7 +61,7 @@ export function AdminSettings() {
     }
     fetchSettings();
 
-    // Fetch Users
+    // Fetch Users (Keep Real-time listener for now as it's efficient, but updates go via API)
     const unsubscribeUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       const userList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as AppUser));
       setUsers(userList);
@@ -66,10 +73,25 @@ export function AdminSettings() {
   }, []);
 
   const handleSaveSettings = async () => {
+    if (!auth.currentUser) return;
     setSaving(true);
     try {
-      await setDoc(doc(db, "config", "global"), settings);
-      toast.success("Configuration système mise à jour");
+      const idToken = await auth.currentUser.getIdToken();
+      const response = await fetch("/api/admin/config", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": auth.currentUser.uid,
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify(settings),
+      });
+
+      if (response.ok) {
+        toast.success("Configuration système mise à jour (PG + Firestore)");
+      } else {
+        throw new Error("Erreur serveur");
+      }
     } catch (error) {
       toast.error("Échec de l'enregistrement");
     } finally {
