@@ -18,7 +18,7 @@ async function startServer() {
   const PORT = 3000;
 
   // Health check route
-  app.get("/api/health", (req, res) => {
+  app.get("/api/health", async (req, res) => {
     // @ts-ignore
     const dbStatus = (await import("./src/lib/db.ts")).default;
     res.json({ 
