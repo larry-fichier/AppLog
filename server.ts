@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { query, queryHelios } from "./src/lib/db.ts";
+import { query, queryHelios, initPersistence } from "./src/lib/db.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,39 +138,67 @@ async function startServer() {
           ON CONFLICT (id) DO NOTHING
         `);
       }
+
+      // Seed default zones if empty
+      const zoneCheck = await query("SELECT COUNT(*) FROM zones");
+      if (parseInt(zoneCheck.rows[0].count) === 0) {
+        await query(`INSERT INTO zones (id, name, is_active) VALUES 
+          ('operation', 'Opérations', true),
+          ('administratif', 'Administratif', true)
+          ON CONFLICT (id) DO NOTHING
+        `);
+      }
     } catch (e) {
       console.error("[DB] Erreur lors de l'initialisation de la base :", (e as Error).message);
     }
   }
 
   await initDatabase();
+  await initPersistence();
 
   // --- AUTH MIDDLEWARE ---
   const authenticateToken = async (req: any, res: any, next: any) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    try {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.split(' ')[1];
 
-    // Fallback support for old client mode if needed (not recommended)
-    const bypassUid = req.headers['x-user-uid'];
-    if (bypassUid === "demo-admin-uid") {
-      req.user = { id: 1, role: "admin", email: "larryfichier@gmail.com" };
-      return next();
-    }
+      // Fallback support for old client mode if needed (not recommended)
+      const bypassUid = req.headers['x-user-uid'];
+      if (bypassUid === "demo-admin-uid") {
+        req.user = { id: 1, role: "admin", email: "larryfichier@gmail.com" };
+        return next();
+      }
 
-    if (!token) return res.status(401).json({ error: "Session expirée ou invalide. Veuillez vous connecter." });
+      if (!token) {
+        return res.status(401).json({ error: "Session expirée ou invalide. Veuillez vous connecter." });
+      }
 
-    jwt.verify(token, JWT_SECRET, async (err: any, user: any) => {
-      if (err) return res.status(403).json({ error: "Accès refusé. Token invalide." });
-      
+      // Promisified jwt.verify for cleaner async/await
+      const decoded: any = await new Promise((resolve, reject) => {
+        jwt.verify(token, JWT_SECRET, (err: any, data: any) => {
+          if (err) reject(err);
+          else resolve(data);
+        });
+      }).catch(err => {
+        return null;
+      });
+
+      if (!decoded || !decoded.id) {
+        return res.status(403).json({ error: "Accès refusé. Token invalide." });
+      }
+
       // Verify user still exists in DB
-      const result = await query("SELECT id, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL", [user.id]);
+      const result = await query("SELECT id, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL", [decoded.id]);
       if (result.rows.length === 0) {
         return res.status(401).json({ error: "Utilisateur non trouvé" });
       }
       
       req.user = result.rows[0];
       next();
-    });
+    } catch (globalErr) {
+      console.error("[Auth] Global middleware error:", globalErr);
+      res.status(500).json({ error: "Erreur interne de sécurité" });
+    }
   };
 
   // --- HELPER: get context for RLS ---
@@ -255,22 +283,55 @@ async function startServer() {
       }
 
       // Sync zones
+      console.log(`[Config] Syncing ${zones.length} zones...`);
+      const zoneIds = zones.map((z: any) => z.id).filter(Boolean);
+      if (zoneIds.length > 0) {
+        await query("UPDATE zones SET is_active = false WHERE id != ANY($1)", [zoneIds]);
+      }
       for (const zone of zones) {
-        await query(`INSERT INTO zones (id, name, is_active) VALUES ($1, $2, true) ON CONFLICT (id) DO UPDATE SET name = $2`, [zone.id, zone.label]);
+        if (!zone.id) continue;
+        await query(`
+          INSERT INTO zones (id, name, is_active) 
+          VALUES ($1, $2, true) 
+          ON CONFLICT (id) DO UPDATE SET name = $2, is_active = true
+        `, [zone.id, zone.label || zone.name || "Sans Nom"]);
       }
       
       // Sync stations
+      console.log(`[Config] Syncing ${stations.length} stations...`);
+      const stationIds = stations.map((s: any) => s.id).filter(Boolean);
+      if (stationIds.length > 0) {
+        await query("UPDATE stations SET is_active = false WHERE id != ANY($1)", [stationIds]);
+      }
       for (const station of stations) {
-        if (station.zoneId) {
-          await query(`INSERT INTO stations (id, zone_id, name, is_active) VALUES ($1, $2, $3, true) ON CONFLICT (id) DO UPDATE SET name = $3, zone_id = $2`, [station.id, station.zoneId, station.label]);
+        if (!station.id) continue;
+        // Ensure we have a valid zoneId, otherwise use a fallback or skip
+        const targetZoneId = station.zoneId || (zoneIds.length > 0 ? zoneIds[0] : null);
+        if (targetZoneId) {
+          await query(`
+            INSERT INTO stations (id, zone_id, name, is_active) 
+            VALUES ($1, $2, $3, true) 
+            ON CONFLICT (id) DO UPDATE SET name = $3, zone_id = $2, is_active = true
+          `, [station.id, targetZoneId, station.label || station.name || "Sans Nom"]);
         }
       }
 
       // Sync categories
+      console.log(`[Config] Syncing ${categories.length} categories...`);
+      const catIds = categories.map((c: any) => c.id).filter(Boolean);
+      if (catIds.length > 0) {
+        await query("UPDATE categories SET is_active = false WHERE id != ANY($1)", [catIds]);
+      }
       for (const cat of categories) {
-        await query(`INSERT INTO categories (id, code, label, is_active) VALUES ($1, $2, $3, true) ON CONFLICT (id) DO UPDATE SET label = $3`, [cat.id, cat.id, cat.label]);
+        if (!cat.id) continue;
+        await query(`
+          INSERT INTO categories (id, code, label, is_active) 
+          VALUES ($1, $2, $3, true) 
+          ON CONFLICT (id) DO UPDATE SET label = $3, is_active = true
+        `, [cat.id, cat.id, cat.label || cat.name || "Sans Nom"]);
       }
 
+      console.log("[Config] Configuration synchronisée avec succès.");
       res.json({ success: true });
     } catch (e: any) {
       console.error("Save config error:", e);
@@ -285,9 +346,12 @@ async function startServer() {
       
       // Fetch equipment using RLS context
       const result = await queryHelios(`
-        SELECT e.*, c.code as category_code, c.label as category_label 
+        SELECT e.*, c.code as category_code, c.label as category_label, 
+               z.name as zone_name, s.name as station_name
         FROM equipment e
-        JOIN categories c ON e.category_id = c.id
+        LEFT JOIN categories c ON e.category_id = c.id
+        LEFT JOIN zones z ON e.zone_id = z.id
+        LEFT JOIN stations s ON e.station_id = s.id
         WHERE e.deleted_at IS NULL
         ORDER BY e.created_at DESC
       `, [], ctx);
@@ -305,6 +369,13 @@ async function startServer() {
       const merged = result.rows.map(e => ({
         ...e,
         id: String(e.id),
+        category: e.category_id,
+        location: {
+          zone: e.zone_id,
+          station: e.station_id,
+          service: e.zone_id, // Legacy support for dashboard view
+          office: e.station_id  // Legacy support for dashboard view
+        },
         details: detailsResults
           .filter(d => d.equipment_id === e.id)
           .reduce((acc, curr) => ({ ...acc, [curr.field_key]: curr.field_value }), {})

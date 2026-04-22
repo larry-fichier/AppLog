@@ -39,7 +39,7 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
   const [arrivalDate, setArrivalDate] = useState("");
   const [departureDate, setDepartureDate] = useState("");
   const [location, setLocation] = useState({
-    zone: "Zone 1",
+    zone: "",
     station: "",
     service: "operation" as const,
     office: ""
@@ -54,9 +54,9 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
           const data = await response.json();
           // Map PG data to the settings format expected by the dialog
           setDynamicSettings({
-            categories: data.categories.map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
-            zones: data.zones.map((z: any) => ({ id: z.id, label: z.name })),
-            stations: data.stations.map((s: any) => ({ id: s.id, label: s.name })),
+            categories: (data.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+            zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+            stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
             roles: [] // Not needed here
           });
         }
@@ -73,7 +73,7 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
       setArrivalDate(item.arrivalDate || "");
       setDepartureDate(item.departureDate || "");
       setLocation(item.location || {
-        zone: "Zone 1",
+        zone: "",
         station: "",
         service: "operation",
         office: ""
@@ -86,7 +86,7 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
       setArrivalDate("");
       setDepartureDate("");
       setLocation({
-        zone: "Zone 1",
+        zone: "",
         station: "",
         service: "operation",
         office: ""

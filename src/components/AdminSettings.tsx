@@ -42,16 +42,8 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   const [newUser, setNewUser] = useState({ email: "", password: "", displayName: "", role: "agent_logistique" as UserRole });
   const [users, setUsers] = useState<AppUser[]>([]);
   const [settings, setSettings] = useState<GlobalSettings>({
-    categories: [
-      { id: "rame", label: "Rame (Véhicule)", icon: "Car" },
-      { id: "cuisine", label: "Cuisine", icon: "Utensils" },
-      { id: "electronique", label: "Électronique", icon: "Laptop" },
-      { id: "groupe", label: "Groupe Électrogène", icon: "Zap" }
-    ],
-    zones: [
-      { id: "operation", label: "Opérations" },
-      { id: "administratif", label: "Administratif" }
-    ],
+    categories: [],
+    zones: [],
     stations: [],
     roles: [
       { id: "chef_bureau_logistique", label: "Chef Bureau Logistique" },
@@ -68,15 +60,18 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
         const response = await fetch("/api/config");
         if (response.ok) {
           const data = await response.json();
-          // Map PG categories to the settings state structure
-          if (data.categories.length > 0) {
-            setSettings({
-              categories: data.categories.map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
-              zones: data.zones.map((z: any) => ({ id: z.id, label: z.name })),
-              stations: data.stations.map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
-              roles: settings.roles // Keep existing roles defined in state
-            });
-          }
+          // Always update settings if we got data from API
+          setSettings({
+            categories: (data.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+            zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+            stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
+            roles: [
+              { id: "chef_bureau_logistique", label: "Chef Bureau Logistique" },
+              { id: "agent_logistique", label: "Agent Logistique" },
+              { id: "csph", label: "CSPH" },
+              { id: "chef_service_administratif", label: "Chef Service Administratif" }
+            ]
+          });
         }
       } catch (error) {
         console.error("Error fetching settings", error);
@@ -88,16 +83,25 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
     // Fetch Users
     async function fetchUsers() {
+      const token = localStorage.getItem("helios_token");
+      if (!token && !isBypass) return;
+
       try {
-        const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
+        const idToken = isBypass ? "demo-token" : token;
+        const userUid = isBypass ? "demo-admin-uid" : "";
+        
         const response = await fetch("/api/admin/users", {
           headers: { 
-            "Authorization": `Bearer ${idToken}`
+            "Authorization": `Bearer ${idToken}`,
+            "x-user-uid": userUid
           }
         });
         if (response.ok) {
           const data = await response.json();
           setUsers(data.map((u: any) => ({ ...u, uid: String(u.id) })));
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          console.error("Fetch users error status:", response.status, errorData);
         }
       } catch (error) {
         console.error("Error fetching users", error);
@@ -132,7 +136,23 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
       });
 
       if (response.ok) {
-        toast.success("Configuration système mise à jour (PG + Firestore)");
+        toast.success("Configuration système mise à jour dans la base de données PostgreSQL");
+        // Refetch to ensure UI is in sync with DB state
+        const refreshResponse = await fetch("/api/config");
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setSettings({
+            categories: (refreshData.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+            zones: (refreshData.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+            stations: (refreshData.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
+            roles: [
+              { id: "chef_bureau_logistique", label: "Chef Bureau Logistique" },
+              { id: "agent_logistique", label: "Agent Logistique" },
+              { id: "csph", label: "CSPH" },
+              { id: "chef_service_administratif", label: "Chef Service Administratif" }
+            ]
+          });
+        }
       } else {
         const errorData = await response.json();
         throw new Error(errorData.error || "Erreur serveur");

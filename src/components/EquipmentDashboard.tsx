@@ -321,7 +321,7 @@ export function EquipmentDashboard({
                   </span>
                 </button>
 
-                {(dynamicSettings?.categories || [
+                {((dynamicSettings?.categories && dynamicSettings.categories.length > 0) ? dynamicSettings.categories : [
                   { id: "rame", label: "Véhicules", icon: "Car" },
                   { id: "cuisine", label: "Cuisine", icon: "Utensils" },
                   { id: "electronique", label: "Électronique", icon: "Laptop" },

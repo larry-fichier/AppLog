@@ -1,70 +1,140 @@
+import pkg from 'pg';
+const { Pool } = pkg;
 import { newDb } from 'pg-mem';
 import fs from 'fs';
 import path from 'path';
 
-// Local persistence path
-const BACKUP_PATH = path.join(process.cwd(), 'base_helios.backup');
+// Local persistence path for pg-mem mode
+const JOURNAL_PATH = path.join(process.cwd(), 'helios_journal.log');
 
-// Initialize a memory-only PostgreSQL engine
-const memDb = newDb();
-
-// Create a PG-compatible interface using the official adapter
-// This resolves the "No execution context available" bug by ensuring pg-mem 
-// manages the selection of the correct database context via its internal pool.
-const pg = memDb.adapters.createPg();
-const pool = new pg.Pool();
-
-// Track the current backup object for potential manual restoration if needed
-let lastBackup: any = null;
+let pool: any;
+let isRealPostgres = false;
 
 /**
- * Persist the current state of the database to a local file
+ * Initialize the database connection. 
+ * Attempts to connect to real PostgreSQL if config is present, 
+ * otherwise falls back to pg-mem.
  */
-function persistData() {
+async function initializeDB() {
+  const envUrl = process.env.DATABASE_URL;
+  const envHost = process.env.PGHOST;
+  
+  if (envUrl || envHost) {
+    try {
+      console.log('[DB] Tentative de connexion au PostgreSQL réel...');
+      // Small timeout for the check to avoid hanging
+      const tempPool = new Pool({
+        connectionString: envUrl,
+        connectionTimeoutMillis: 5000,
+      });
+      
+      // Test the connection
+      await tempPool.query('SELECT 1');
+      console.log('[DB] Connexion PostgreSQL Réel établie avec succès.');
+      
+      pool = tempPool;
+      isRealPostgres = true;
+      return;
+    } catch (err: any) {
+      console.error(`[DB] Échec de connexion PostgreSQL Réel: ${err.message}`);
+      console.log('[DB] Basculement en mode En-Mémoire (pg-mem) par sécurité.');
+    }
+  }
+
+  // Fallback to pg-mem
+  console.log('[DB] Initialisation du mode En-Mémoire (pg-mem).');
+  const memDb = newDb();
+  const pgAdapter = memDb.adapters.createPg();
+  pool = new pgAdapter.Pool();
+  isRealPostgres = false;
+}
+
+// Global initialization state
+let initialized = false;
+
+interface JournalEntry {
+  text: string;
+  params: any[];
+}
+
+/**
+ * Persist a query to the journal (Only for pg-mem fallback)
+ */
+function appendToJournal(text: string, params: any[]) {
+  if (isRealPostgres) return; 
   try {
-    const backup = memDb.backup();
-    // In pg-mem, the backup is a live object. Saving it to disk is complex 
-    // because it contains references. For now, we keep it in memory for the session.
-    lastBackup = backup;
+    const entry: JournalEntry = { text, params };
+    fs.appendFileSync(JOURNAL_PATH, JSON.stringify(entry) + '\n');
   } catch (err) {
-    console.error('[DB] Erreur de sauvegarde:', err);
+    console.error('[DB] Erreur de journalisation:', err);
   }
 }
 
 /**
- * Load the database state from a local file if it exists
+ * Replay the journal to restore state (Only for pg-mem fallback)
  */
-function loadData() {
-  // Persistence across restarts for pg-mem is limited without serializing to SQL.
-  // We initialize the schema in server.ts on every start.
-  console.log('[DB] Nouvelle instance PostgreSQL initialisée.');
+async function loadData() {
+  if (isRealPostgres) return;
+  try {
+    if (fs.existsSync(JOURNAL_PATH)) {
+      console.log('[DB] Restauration du journal PostgreSQL en-mémoire...');
+      const content = fs.readFileSync(JOURNAL_PATH, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim() !== '');
+      
+      let count = 0;
+      for (const line of lines) {
+        try {
+          const entry: JournalEntry = JSON.parse(line);
+          await pool.query(entry.text, entry.params);
+          count++;
+        } catch (e: any) {
+          console.warn(`[DB] Ligne de journal corrompue ignorée: ${e.message}`);
+        }
+      }
+      console.log(`[DB] ${count} opérations rejouées avec succès.`);
+    }
+  } catch (err) {
+    console.error('[DB] Erreur critique de chargement du journal:', err);
+  }
 }
 
-// Initial load
-loadData();
+/**
+ * Public Initialization
+ */
+export async function initPersistence() {
+  if (!initialized) {
+    await initializeDB();
+    initialized = true;
+  }
+  await loadData();
+}
 
 /**
- * Execute a query with the helios context set for RLS simulation
+ * Execute a query with simulation of RLS context if needed
  */
 export async function queryHelios(text: string, params: any[] = [], userContext: { id: string, role: string }) {
+  // RLS logic could be added here for Real PG
   return query(text, params);
 }
 
 /**
  * Standard query for PostgreSQL tasks.
- * Uses the pg-mem adapter which is more stable than the direct query method.
- * Returns the standard pg.Result structure.
+ * Ensures the DB is initialized before executing.
  */
 export async function query(text: string, params: any[] = []) {
+  if (!initialized) {
+    await initializeDB();
+    initialized = true;
+  }
+
   try {
-    const isWrite = /insert|update|delete/i.test(text);
+    const result = await pool.query(text, params);
     
-    // Execute query using the adapter's pool
-    const result = await (pool as any).query(text, params);
-    
-    // Auto-persist on writes (in-memory snapshot)
-    if (isWrite) {
-      persistData();
+    if (!isRealPostgres) {
+      const isWrite = /insert|update|delete/i.test(text);
+      if (isWrite) {
+        appendToJournal(text, params);
+      }
     }
 
     return result;
@@ -75,4 +145,7 @@ export async function query(text: string, params: any[] = []) {
   }
 }
 
-export default memDb;
+export default {
+  get pool() { return pool; },
+  get isRealPostgres() { return isRealPostgres; }
+};
