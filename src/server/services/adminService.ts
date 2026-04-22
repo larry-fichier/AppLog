@@ -2,17 +2,22 @@ import { query } from '../db.ts';
 
 export class AdminService {
   static async getFullConfig() {
-    const categories = await query("SELECT * FROM categories ORDER BY label");
-    const zones = await query("SELECT * FROM zones ORDER BY name");
-    const stations = await query("SELECT * FROM stations ORDER BY name");
-    const fields = await query("SELECT * FROM category_fields ORDER BY sort_order");
-    
-    return {
-      categories: categories.rows,
-      zones: zones.rows,
-      stations: stations.rows,
-      fields: fields.rows
-    };
+    try {
+      const categories = await query("SELECT * FROM categories ORDER BY label");
+      const zones = await query("SELECT * FROM zones ORDER BY name");
+      const stations = await query("SELECT * FROM stations ORDER BY name");
+      const fields = await query("SELECT * FROM category_fields ORDER BY sort_order");
+      
+      return {
+        categories: categories.rows || [],
+        zones: zones.rows || [],
+        stations: stations.rows || [],
+        fields: fields.rows || []
+      };
+    } catch (err) {
+      console.warn("[AdminService] Configuration incomplete ou tables manquantes, retour des listes vides.");
+      return { categories: [], zones: [], stations: [], fields: [] };
+    }
   }
 
   static async saveConfig(data: { categories: any[], zones: any[], stations: any[] }) {

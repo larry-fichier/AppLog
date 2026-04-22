@@ -66,15 +66,19 @@ export async function createApp() {
     }
   });
 
-  // Admin Config
-  app.get("/api/admin/config", authenticateToken, async (req, res) => {
+  // Static Config (Used by both admin and main view)
+  const getConfig = async (req: any, res: any) => {
     try {
       const data = await AdminService.getFullConfig();
       res.json(data);
     } catch (e: any) {
+      console.error("[API] Config Error:", e);
       res.status(500).json({ error: e.message });
     }
-  });
+  };
+
+  app.get("/api/config", authenticateToken, getConfig);
+  app.get("/api/admin/config", authenticateToken, getConfig);
 
   app.post("/api/admin/config", authenticateToken, authorize(['admin', 'chef_bureau_logistique']), async (req, res) => {
     try {
