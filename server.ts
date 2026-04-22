@@ -74,7 +74,7 @@ async function startServer() {
       await query(`
         CREATE TABLE IF NOT EXISTS zones (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          name VARCHAR(150) NOT NULL,
+          name VARCHAR(150) UNIQUE NOT NULL,
           is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -88,7 +88,8 @@ async function startServer() {
           name VARCHAR(150) NOT NULL,
           is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(zone_id, name)
         )
       `);
 
@@ -531,7 +532,70 @@ async function startServer() {
     }
   });
 
-  // --- API: BULK IMPORT ---
+  // --- API: BULK IMPORT SETUP (ZONES/STATIONS) ---
+  app.post("/api/admin/import-setup", authenticateToken, async (req: any, res) => {
+    const { data } = req.body;
+    try {
+      const ctx = await getContext(req.user);
+      const allowedRoles = ["admin", "chef_bureau_logistique"];
+      if (!allowedRoles.includes(ctx.role)) {
+        return res.status(403).json({ error: "Accès refusé" });
+      }
+
+      let importedCount = 0;
+      const errors: string[] = [];
+
+      // Simple deduplication for zones in the batch
+      const uniqueZones = Array.from(new Set(data.map((item: any) => item.zone))).filter(Boolean);
+      const zoneMap: Record<string, string> = {};
+
+      // Create or ensure zones exist
+      for (const zoneName of uniqueZones as string[]) {
+        try {
+          const zoneRes = await query(`
+            INSERT INTO zones (name, is_active) 
+            VALUES ($1, true) 
+            ON CONFLICT (name) DO UPDATE SET is_active = true, updated_at = NOW()
+            RETURNING id
+          `, [zoneName]);
+          
+          if (zoneRes.rows.length > 0) {
+            zoneMap[zoneName] = zoneRes.rows[0].id;
+          }
+        } catch (e: any) {
+          errors.push(`Erreur zone "${zoneName}": ${e.message}`);
+        }
+      }
+
+      // Create stations
+      for (const item of data) {
+        if (!item.station) continue;
+        try {
+          const zoneId = zoneMap[item.zone];
+          if (!zoneId) {
+            errors.push(`Erreur station "${item.station}": Zone "${item.zone}" introuvable`);
+            continue;
+          }
+          
+          await query(`
+            INSERT INTO stations (zone_id, name, is_active) 
+            VALUES ($1, $2, true) 
+            ON CONFLICT (zone_id, name) DO UPDATE SET is_active = true, updated_at = NOW()
+          `, [zoneId, item.station]);
+          
+          importedCount++;
+        } catch (e: any) {
+          errors.push(`Erreur station "${item.station}": ${e.message}`);
+        }
+      }
+
+      res.json({ imported: importedCount, total: data.length, errors });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- API: BULK IMPORT EQUIPMENT ---
   app.post("/api/admin/import", authenticateToken, async (req: any, res) => {
     const { data } = req.body;
     try {

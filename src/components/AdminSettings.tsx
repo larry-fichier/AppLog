@@ -21,7 +21,8 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   const [dbMode, setDbMode] = useState<string>("Vérification...");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'preview' | 'results'>('upload');
+  const [importType, setImportType] = useState<'equipment' | 'setup'>('equipment');
+  const [importStep, setImportStep] = useState<'upload' | 'select_type' | 'mapping' | 'preview' | 'results'>('upload');
   const [rawFileData, setRawFileData] = useState<any[]>([]);
   const [selectedRowIndices, setSelectedRowIndices] = useState<Set<number>>(new Set());
   const [existingEquipmentNames, setExistingEquipmentNames] = useState<Set<string>>(new Set());
@@ -114,7 +115,17 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
           const data = await response.json();
           setUsers(data.map((u: any) => ({ ...u, uid: String(u.id) })));
         } else {
-          const errorData = await response.json().catch(() => ({}));
+          // Robustly handle non-JSON error responses (like HTML fallbacks)
+          let errorData = {};
+          try {
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+              errorData = await response.json();
+            } else {
+              const text = await response.text();
+              console.warn("Non-JSON error response from users API:", text.substring(0, 100));
+            }
+          } catch (e) {}
           console.error("Fetch users error status:", response.status, errorData);
         }
       } catch (error) {
@@ -321,7 +332,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
             });
 
             setColumnMapping(autoMap);
-            setImportStep('mapping');
+            setImportStep('select_type');
           } else {
             toast.error("Le fichier semble vide ou invalide");
           }
@@ -346,24 +357,32 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   };
 
   const goToPreview = async () => {
-    if (!columnMapping.name) {
+    if (importType === 'equipment' && !columnMapping.name) {
       toast.error("Veuillez mapper au moins la colonne 'Nom'");
       return;
     }
     
-    // Fetch existing equipment to detect duplicates
+    if (importType === 'setup' && (!columnMapping.zone || !columnMapping.station)) {
+      toast.error("Veuillez mapper les colonnes 'Zone' et 'Station'");
+      return;
+    }
+    
+    // Fetch existing data for duplicates
     setImporting(true);
     try {
       const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
-      const response = await fetch("/api/equipment", {
-        headers: {
-          "Authorization": `Bearer ${idToken}`
+      if (importType === 'equipment') {
+        const response = await fetch("/api/equipment", {
+          headers: { "Authorization": `Bearer ${idToken}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const names = new Set(data.map((item: any) => String(item.name).toLowerCase().trim()));
+          setExistingEquipmentNames(names);
         }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const names = new Set(data.map((item: any) => String(item.name).toLowerCase().trim()));
-        setExistingEquipmentNames(names);
+      } else {
+        // Clear duplicates for setup mode as we use upsert logic anyway
+        setExistingEquipmentNames(new Set());
       }
       
       // Select all by default
@@ -392,30 +411,38 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     setImporting(true);
     try {
       const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
-      
       const selectedData = rawFileData.filter((_, idx) => selectedRowIndices.has(idx));
 
-      // Transform data based on mapping
-      const formattedData = selectedData.map((row: any) => {
-        // Create a copy of the row for details, excluding mapped main fields
-        const details: Record<string, string> = {};
-        Object.entries(row).forEach(([key, val]) => {
-          if (!Object.values(columnMapping).includes(key) && val) {
-            details[key] = String(val);
-          }
+      let endpoint = "/api/admin/import";
+      let formattedData = [];
+
+      if (importType === 'equipment') {
+        formattedData = selectedData.map((row: any) => {
+          const details: Record<string, string> = {};
+          Object.entries(row).forEach(([key, val]) => {
+            if (!Object.values(columnMapping).includes(key) && val) {
+              details[key] = String(val);
+            }
+          });
+
+          return {
+            name: row[columnMapping.name] || "Actif sans nom",
+            category: columnMapping.category && columnMapping.category !== "non_mappe" ? row[columnMapping.category] : importDefaults.category,
+            zone: columnMapping.zone && columnMapping.zone !== "non_mappe" ? row[columnMapping.zone] : importDefaults.zone,
+            station: columnMapping.station && columnMapping.station !== "non_mappe" ? row[columnMapping.station] : importDefaults.station,
+            status: columnMapping.status && columnMapping.status !== "non_mappe" ? row[columnMapping.status] : "fonctionnel",
+            details: details
+          };
         });
+      } else {
+        endpoint = "/api/admin/import-setup";
+        formattedData = selectedData.map((row: any) => ({
+          zone: row[columnMapping.zone],
+          station: row[columnMapping.station]
+        }));
+      }
 
-        return {
-          name: row[columnMapping.name] || "Actif sans nom",
-          category: columnMapping.category && columnMapping.category !== "non_mappe" ? row[columnMapping.category] : importDefaults.category,
-          zone: columnMapping.zone && columnMapping.zone !== "non_mappe" ? row[columnMapping.zone] : importDefaults.zone,
-          station: columnMapping.station && columnMapping.station !== "non_mappe" ? row[columnMapping.station] : importDefaults.station,
-          status: columnMapping.status && columnMapping.status !== "non_mappe" ? row[columnMapping.status] : "fonctionnel",
-          details: details
-        };
-      });
-
-      const response = await fetch("/api/admin/import", {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -428,7 +455,20 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
       if (response.ok) {
         setImportStats(result);
         setImportStep('results');
-        toast.success(`Import terminé: ${result.imported}/${result.total} unités`);
+        toast.success(`Import terminé: ${result.imported}/${result.total} entrées`);
+        
+        // Refresh configuration if we imported infrastructure
+        if (importType === 'setup') {
+          const configRes = await fetch("/api/config");
+          if (configRes.ok) {
+             const data = await configRes.json();
+             setSettings(prev => ({
+               ...prev,
+               zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+               stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id }))
+             }));
+          }
+        }
       } else {
         toast.error(result.error);
       }
@@ -843,6 +883,55 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   </div>
                 )}
 
+                {importStep === 'select_type' && (
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="text-center space-y-2">
+                      <h3 className="text-lg font-black text-text-dark uppercase tracking-wider">Que contient votre fichier ?</h3>
+                      <p className="text-sm text-muted-foreground">Sélectionnez le type de données que vous souhaitez intégrer à HELIOS.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <button 
+                        onClick={() => { setImportType('equipment'); setImportStep('mapping'); }}
+                        className="group relative p-8 border-2 border-zinc-100 rounded-2xl text-left hover:border-brand-orange/40 hover:bg-brand-orange/[0.02] transition-all hover:shadow-xl focus:outline-none"
+                      >
+                        <div className="w-12 h-12 bg-brand-orange/10 text-brand-orange rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                          <Settings2 size={24} />
+                        </div>
+                        <h4 className="text-base font-black text-text-dark uppercase mb-2">Équipements (Actifs)</h4>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Pour importer votre parc matériel (Ordinateurs, Climatiseurs, Mobilier, etc.) et les affecter à des services.
+                        </p>
+                        <div className="absolute top-4 right-4 text-zinc-200 group-hover:text-brand-orange/20 transition-colors">
+                          <ChevronRight size={24} />
+                        </div>
+                      </button>
+
+                      <button 
+                        onClick={() => { setImportType('setup'); setImportStep('mapping'); }}
+                        className="group relative p-8 border-2 border-zinc-100 rounded-2xl text-left hover:border-accent/40 hover:bg-accent/[0.02] transition-all hover:shadow-xl focus:outline-none"
+                      >
+                        <div className="w-12 h-12 bg-accent/10 text-accent rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                          <MapPin size={24} />
+                        </div>
+                        <h4 className="text-base font-black text-text-dark uppercase mb-2">Zones & Stations</h4>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Pour configurer votre structure organisationnelle (Nouveaux Services, Bureaux, Localisations).
+                        </p>
+                        <div className="absolute top-4 right-4 text-zinc-200 group-hover:text-accent/20 transition-colors">
+                          <ChevronRight size={24} />
+                        </div>
+                      </button>
+                    </div>
+
+                    <div className="pt-4 flex justify-center">
+                      <Button variant="ghost" onClick={() => setImportStep('upload')} className="text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-600">
+                        Retour au choix du fichier
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {importStep === 'mapping' && (
                   <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
                     <div className="bg-zinc-100 p-5 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
@@ -867,13 +956,16 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                        {[
+                        {(importType === 'equipment' ? [
                           { id: 'name', label: 'Désignation de l\'Actif', req: true, desc: "Nom principal (ex: RAM 101)" },
                           { id: 'category', label: 'Catégorie Système', req: true, desc: "Type de matériel" },
                           { id: 'zone', label: 'Service / Localisation', req: true, desc: "Zone de déploiement" },
                           { id: 'station', label: 'Position / Bureau', req: false, desc: "Optionnel" },
                           { id: 'status', label: 'État Actuel', req: false, desc: "Converti en standard Helios" }
-                        ].map((field) => (
+                        ] : [
+                          { id: 'zone', label: 'Zone (Service)', req: true, desc: "Nom du service ou département" },
+                          { id: 'station', label: 'Station (Bureau)', req: true, desc: "Nom du bureau ou poste de travail" }
+                        ]).map((field) => (
                           <div key={field.id} className="space-y-4 group p-4 border border-transparent hover:border-zinc-100 hover:bg-zinc-50/50 rounded-xl transition-all">
                             <div className="space-y-2">
                               <div className="flex justify-between items-end">
@@ -994,16 +1086,25 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                           <thead className="sticky top-0 bg-[#f8fafc] z-10 border-b border-border-custom">
                             <tr>
                               <th className="px-4 py-3 w-10"></th>
-                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Désignation</th>
-                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Catégorie</th>
-                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Zone</th>
-                              <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest text-right">Statut</th>
+                              {importType === 'equipment' ? (
+                                <>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Désignation</th>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Catégorie</th>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Zone</th>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest text-right">Statut</th>
+                                </>
+                              ) : (
+                                <>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Zone / Service</th>
+                                  <th className="px-4 py-3 text-[10px] font-black text-[#636e72] uppercase tracking-widest">Station / Bureau</th>
+                                </>
+                              )}
                             </tr>
                           </thead>
                           <tbody>
                             {rawFileData.map((row, idx) => {
-                              const name = row[columnMapping.name];
-                              const isDuplicate = existingEquipmentNames.has(String(name).toLowerCase().trim());
+                              const name = importType === 'equipment' ? row[columnMapping.name] : row[columnMapping.zone];
+                              const isDuplicate = importType === 'equipment' && existingEquipmentNames.has(String(name).toLowerCase().trim());
                               const isSelected = selectedRowIndices.has(idx);
                               
                               return (
@@ -1024,26 +1125,40 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                                       className="w-4 h-4 rounded border-zinc-300 text-accent focus:ring-accent"
                                     />
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex flex-col">
-                                      <span className="text-sm font-bold text-text-dark flex items-center gap-2">
-                                        {name}
-                                        {isDuplicate && (
-                                          <span className="bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">
-                                            DOUBLON POSSIBLE
+                                  {importType === 'equipment' ? (
+                                    <>
+                                      <td className="px-4 py-3">
+                                        <div className="flex flex-col">
+                                          <span className="text-sm font-bold text-text-dark flex items-center gap-2">
+                                            {name}
+                                            {isDuplicate && (
+                                              <span className="bg-amber-100 text-amber-700 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">
+                                                DOUBLON POSSIBLE
+                                              </span>
+                                            )}
                                           </span>
-                                        )}
-                                      </span>
-                                      <span className="text-[10px] text-zinc-400 font-medium">Ligne {idx + 1}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.category]}</td>
-                                  <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.zone]}</td>
-                                  <td className="px-4 py-3 text-right">
-                                    <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded">
-                                      {row[columnMapping.status] || "Fonctionnel"}
-                                    </span>
-                                  </td>
+                                          <span className="text-[10px] text-zinc-400 font-medium">Ligne {idx + 1}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.category]}</td>
+                                      <td className="px-4 py-3 text-xs font-medium text-zinc-600">{row[columnMapping.zone]}</td>
+                                      <td className="px-4 py-3 text-right">
+                                        <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded">
+                                          {row[columnMapping.status] || "Fonctionnel"}
+                                        </span>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-4 py-3">
+                                        <div className="flex flex-col">
+                                          <span className="text-sm font-bold text-text-dark">{row[columnMapping.zone]}</span>
+                                          <span className="text-[10px] text-zinc-400 font-medium">Ligne {idx + 1}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-sm font-medium text-zinc-600">{row[columnMapping.station]}</td>
+                                    </>
+                                  )}
                                 </tr>
                               );
                             })}
@@ -1132,6 +1247,10 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   <p className="font-bold underline">Plus besoin de renommer vos colonnes Access !</p>
                   <p>L'assistant va scanner votre fichier et vous proposer de lier vos colonnes à nos champs. Même si vos noms sont différents (ex: "ID_Matériel" pour "Nom"), vous pourrez les associer manuellement.</p>
                   <div className="p-3 bg-blue-100/50 rounded border border-blue-200">
+                    <p className="italic text-[10px] mb-2 font-black uppercase text-blue-800">NOUVEAU : Support de l'Architecture</p>
+                    <p className="italic text-[10px]">Vous pouvez désormais importer tout votre organigramme (Services & Bureaux) en une seule fois. Sélectionnez simplement le type "Zones & Stations" après l'upload.</p>
+                  </div>
+                  <div className="p-3 bg-zinc-100 rounded border border-zinc-200">
                     <p className="italic text-[10px]">Note: Le système effectue une "Reconnaissance Intelligente" (Fuzzy Match). Par exemple, "Rames" dans Excel sera automatiquement détecté comme "Rame" dans HELIOS.</p>
                   </div>
                 </CardContent>
