@@ -18,6 +18,7 @@ interface AdminSettingsProps {
 export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [dbMode, setDbMode] = useState<string>("Vérification...");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'preview' | 'results'>('upload');
@@ -54,13 +55,26 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   });
 
   useEffect(() => {
+    // Fetch DB Status
+    async function checkStatus() {
+      try {
+        const res = await fetch("/api/health");
+        if (res.ok) {
+          const data = await res.json();
+          setDbMode(data.databaseMode);
+        }
+      } catch (e) {
+        setDbMode("Erreur de connexion");
+      }
+    }
+    checkStatus();
+
     // Fetch Settings
     async function fetchSettings() {
       try {
         const response = await fetch("/api/config");
         if (response.ok) {
           const data = await response.json();
-          // Always update settings if we got data from API
           setSettings({
             categories: (data.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
             zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
@@ -480,6 +494,24 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
         </TabsList>
 
         <TabsContent value="logic" className="space-y-8 mt-0">
+          <div className="flex items-center justify-between bg-zinc-50 p-4 rounded-xl border border-zinc-200 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${dbMode.includes('Réel') ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                {dbMode.includes('Réel') ? <ShieldCheck size={20} /> : <AlertCircle size={20} />}
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Source de Données</p>
+                <p className="text-sm font-black">{dbMode}</p>
+              </div>
+            </div>
+            {dbMode.includes('Mémoire') && (
+              <div className="text-[10px] bg-amber-50 text-amber-800 p-2 rounded border border-amber-200 max-w-md italic">
+                Note: L'application ne parvient pas à joindre votre PostgreSQL local (IP privée). 
+                Les données sont stockées temporairement en mémoire.
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Zones (Services) */}
             <Card className="border-border-custom shadow-sm">
@@ -505,7 +537,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                     </Button>
                   </div>
                 ))}
-                <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider" onClick={() => addToList("zones", { id: `z_${Date.now()}`, label: "Nouveau Service" })}>
+                <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider" onClick={() => addToList("zones", { id: crypto.randomUUID(), label: "Nouveau Service" })}>
                   <Plus size={14} className="mr-2" />
                   Nouveau Service
                 </Button>
@@ -557,7 +589,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                     </div>
                   </div>
                 ))}
-                <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider" onClick={() => addToList("stations", { id: `st_${Date.now()}`, label: "Nouveau Bureau" })}>
+                <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider" onClick={() => addToList("stations", { id: crypto.randomUUID(), label: "Nouveau Bureau" })}>
                   <Plus size={14} className="mr-2" />
                   Nouveau Bureau
                 </Button>
@@ -583,7 +615,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                     </Button>
                   </div>
                 ))}
-                <Button variant="outline" className="h-9 border-dashed text-[10px] font-black uppercase" onClick={() => addToList("categories", { id: `c_${Date.now()}`, label: "Autre", icon: "Box" })}>
+                <Button variant="outline" className="h-9 border-dashed text-[10px] font-black uppercase" onClick={() => addToList("categories", { id: crypto.randomUUID(), label: "Autre", icon: "Box" })}>
                   <Plus size={12} className="mr-2" />
                   Catégorie
                 </Button>

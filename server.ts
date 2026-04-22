@@ -19,7 +19,17 @@ async function startServer() {
 
   // Health check route
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString(), cloud: "disabled" });
+    // @ts-ignore
+    const dbStatus = (await import("./src/lib/db.ts")).default;
+    res.json({ 
+      status: "ok", 
+      timestamp: new Date().toISOString(), 
+      databaseMode: dbStatus.isRealPostgres ? "PostgreSQL Réel" : "Mémoire (Fallback)",
+      env: {
+        hasDbUrl: !!process.env.DATABASE_URL,
+        hasDbHost: !!process.env.PGHOST
+      }
+    });
   });
 
   app.use(express.json());
@@ -27,15 +37,15 @@ async function startServer() {
   // --- DATABASE INITIALIZATION ---
   async function initDatabase() {
     if (!process.env.DATABASE_URL && !process.env.PGHOST) {
-      console.error("[DB] ALERTE: Aucune configuration PostgreSQL trouvée (DATABASE_URL ou PGHOST). l'application risque d'échouer.");
+      console.error("[DB] ALERTE: Aucune configuration PostgreSQL trouvée.");
     }
     try {
-      // Test de connexion simple
       await query("SELECT 1");
       console.log("[DB] Connexion PostgreSQL vérifiée.");
-
-      console.log("[DB] Initialisation des tables PostgreSQL HELIOS...");
       
+      // Extension pour UUID si besoin (ne fonctionne que sur PG réel avec droits superuser)
+      try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
+
       await query(`
         CREATE TABLE IF NOT EXISTS users (
           id SERIAL PRIMARY KEY,
@@ -45,44 +55,47 @@ async function startServer() {
           display_name VARCHAR(255),
           role VARCHAR(50) DEFAULT 'agent_logistique',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           deleted_at TIMESTAMP
         )
       `);
 
-      // Add missing columns if needed
-      try { await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(128) UNIQUE'); } catch (e) {}
-      try { await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT'); } catch (e) {}
-
       await query(`
         CREATE TABLE IF NOT EXISTS categories (
-          id VARCHAR(50) PRIMARY KEY,
-          code VARCHAR(50) UNIQUE NOT NULL,
-          label VARCHAR(100) NOT NULL,
-          is_active BOOLEAN DEFAULT true
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          code VARCHAR(100) UNIQUE NOT NULL,
+          label VARCHAR(150) NOT NULL,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
 
       await query(`
         CREATE TABLE IF NOT EXISTS zones (
-          id VARCHAR(50) PRIMARY KEY,
-          name VARCHAR(100) NOT NULL,
-          is_active BOOLEAN DEFAULT true
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name VARCHAR(150) NOT NULL,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
 
       await query(`
         CREATE TABLE IF NOT EXISTS stations (
-          id VARCHAR(50) PRIMARY KEY,
-          zone_id VARCHAR(50) REFERENCES zones(id),
-          name VARCHAR(100) NOT NULL,
-          is_active BOOLEAN DEFAULT true
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          zone_id UUID REFERENCES zones(id),
+          name VARCHAR(150) NOT NULL,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
 
       await query(`
         CREATE TABLE IF NOT EXISTS category_fields (
           id SERIAL PRIMARY KEY,
-          category_id VARCHAR(50) REFERENCES categories(id),
+          category_id UUID REFERENCES categories(id),
           label VARCHAR(100) NOT NULL,
           type VARCHAR(50) DEFAULT 'text',
           sort_order INTEGER DEFAULT 0
@@ -93,11 +106,15 @@ async function startServer() {
         CREATE TABLE IF NOT EXISTS equipment (
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
-          category_id VARCHAR(50) REFERENCES categories(id),
+          category_id UUID REFERENCES categories(id),
           status VARCHAR(50) DEFAULT 'fonctionnel',
-          zone_id VARCHAR(50) REFERENCES zones(id),
-          station_id VARCHAR(50) REFERENCES stations(id),
+          zone_id UUID REFERENCES zones(id),
+          station_id UUID REFERENCES stations(id),
           created_by INTEGER REFERENCES users(id),
+          description TEXT,
+          serial_number VARCHAR(100),
+          purchase_date DATE,
+          qr_code_data TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           deleted_at TIMESTAMP
