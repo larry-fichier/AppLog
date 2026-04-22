@@ -49,9 +49,10 @@ async function startServer() {
         try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
       }
 
+      // --- TABLES INITIALIZATION (Matching user's schema) ---
       await query(`
         CREATE TABLE IF NOT EXISTS users (
-          id SERIAL PRIMARY KEY,
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           username VARCHAR(128) UNIQUE,
           email VARCHAR(255) UNIQUE NOT NULL,
           password_hash TEXT,
@@ -66,8 +67,8 @@ async function startServer() {
       await query(`
         CREATE TABLE IF NOT EXISTS categories (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          code VARCHAR(100) UNIQUE NOT NULL,
-          label VARCHAR(150) NOT NULL,
+          code VARCHAR(50) UNIQUE NOT NULL,
+          label VARCHAR(100) NOT NULL,
           is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -98,7 +99,7 @@ async function startServer() {
 
       await query(`
         CREATE TABLE IF NOT EXISTS category_fields (
-          id SERIAL PRIMARY KEY,
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           category_id UUID REFERENCES categories(id),
           label VARCHAR(100) NOT NULL,
           type VARCHAR(50) DEFAULT 'text',
@@ -108,13 +109,15 @@ async function startServer() {
 
       await query(`
         CREATE TABLE IF NOT EXISTS equipment (
-          id SERIAL PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name VARCHAR(200) NOT NULL,
           category_id UUID REFERENCES categories(id),
           status VARCHAR(50) DEFAULT 'fonctionnel',
           zone_id UUID REFERENCES zones(id),
           station_id UUID REFERENCES stations(id),
-          created_by INTEGER REFERENCES users(id),
+          service_id UUID REFERENCES zones(id),
+          bureau_id UUID REFERENCES stations(id),
+          created_by UUID REFERENCES users(id),
           description TEXT,
           serial_number VARCHAR(100),
           purchase_date DATE,
@@ -127,10 +130,21 @@ async function startServer() {
 
       await query(`
         CREATE TABLE IF NOT EXISTS equipment_details (
-          id SERIAL PRIMARY KEY,
-          equipment_id INTEGER REFERENCES equipment(id),
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          equipment_id UUID REFERENCES equipment(id),
           field_key VARCHAR(100) NOT NULL,
           field_value TEXT
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS movements (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          equipment_id UUID REFERENCES equipment(id),
+          type VARCHAR(50) NOT NULL,
+          performed_by UUID REFERENCES users(id),
+          note TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
 
@@ -345,11 +359,12 @@ async function startServer() {
       }
       for (const cat of categories) {
         if (!cat.id) continue;
+        const code = cat.code || cat.label?.toLowerCase().replace(/\s+/g, '_') || cat.id.substring(0, 8);
         await query(`
           INSERT INTO categories (id, code, label, is_active) 
           VALUES ($1, $2, $3, true) 
-          ON CONFLICT (id) DO UPDATE SET label = $3, is_active = true
-        `, [cat.id, cat.id, cat.label || cat.name || "Sans Nom"]);
+          ON CONFLICT (id) DO UPDATE SET label = $3, is_active = true, code = EXCLUDED.code
+        `, [cat.id, code, cat.label || cat.name || "Sans Nom"]);
       }
 
       console.log("[Config] Configuration synchronisée avec succès.");
@@ -414,8 +429,8 @@ async function startServer() {
       const ctx = await getContext(req.user);
       
       const equipRes = await queryHelios(`
-        INSERT INTO equipment (name, category_id, status, zone_id, station_id, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO equipment (name, category_id, status, zone_id, station_id, service_id, bureau_id, created_by)
+        VALUES ($1, $2, $3, $4, $5, $4, $5, $6)
         RETURNING id
       `, [name, category_id, status, zone_id, station_id, ctx.id], ctx);
       
@@ -640,11 +655,16 @@ async function startServer() {
             stationId = null;
           }
 
+          // Use defaults if mapping didn't provide a valid ID
+          const finalCategoryId = categoryId && categoryId.length === 36 ? categoryId : null;
+          const finalZoneId = zoneId && zoneId.length === 36 ? zoneId : null;
+          const finalStationId = stationId && stationId.length === 36 ? stationId : null;
+
           const equipRes = await query(`
-            INSERT INTO equipment (name, category_id, status, zone_id, station_id, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO equipment (name, category_id, status, zone_id, station_id, service_id, bureau_id, created_by)
+            VALUES ($1, $2, $3, $4, $5, $4, $5, $6)
             RETURNING id
-          `, [item.name, categoryId, item.status || 'fonctionnel', zoneId, stationId, ctx.id]);
+          `, [item.name, finalCategoryId, item.status || 'fonctionnel', finalZoneId, finalStationId, ctx.id]);
           
           const newId = equipRes.rows[0].id;
 

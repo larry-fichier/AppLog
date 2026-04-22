@@ -49,7 +49,7 @@ async function initializeDB() {
   // Register gen_random_uuid for pg-mem compatibility
   memDb.public.registerFunction({
     name: 'gen_random_uuid',
-    returns: memDb.registry.getType('uuid'),
+    returns: (memDb as any).getType('uuid'),
     implementation: () => crypto.randomUUID(),
   });
 

@@ -1014,18 +1014,22 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                             </div>
 
                             {importType === 'equipment' && (field.id === 'category' || field.id === 'zone' || field.id === 'station') && (
-                              <div className="animate-in slide-in-from-top-2 duration-300 space-y-2 bg-white/60 p-3 rounded-lg border border-dashed border-zinc-200">
-                                <p className="text-[9px] font-black text-accent uppercase tracking-widest flex items-center gap-2">
-                                  <ChevronRight size={10} /> 
+                              <div className={`animate-in slide-in-from-top-2 duration-300 space-y-2 p-4 rounded-xl border-2 shadow-sm transition-all ${
+                                columnMapping[field.id] === "non_mappe" && !importDefaults[field.id] && field.req
+                                ? "bg-amber-50 border-amber-200 ring-2 ring-amber-100" 
+                                : "bg-zinc-50 border-zinc-200"
+                              }`}>
+                                <p className="text-[10px] font-black text-accent uppercase tracking-widest flex items-center gap-2">
+                                  <ChevronRight size={12} /> 
                                   {columnMapping[field.id] && columnMapping[field.id] !== "non_mappe" 
                                     ? "Valeur de repli (si colonne vide)" 
-                                    : "Valeur par défaut (tout le fichier)"}
+                                    : "VALEUR PAR DÉFAUT OBLIGATOIRE"}
                                 </p>
                                 <Select 
                                   value={importDefaults[field.id]} 
                                   onValueChange={(val) => setImportDefaults(prev => ({ ...prev, [field.id]: val }))}
                                 >
-                                  <SelectTrigger className="h-9 text-xs font-bold bg-transparent border-zinc-200">
+                                  <SelectTrigger className="h-10 text-xs font-bold bg-white border-zinc-300">
                                     <SelectValue placeholder={`Choisir ${field.label.toLowerCase()}...`} />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1040,6 +1044,11 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                                     ))}
                                   </SelectContent>
                                 </Select>
+                                {columnMapping[field.id] === "non_mappe" && !importDefaults[field.id] && field.req && (
+                                  <p className="text-[9px] font-bold text-amber-600 animate-pulse uppercase">
+                                    Attention: Sans colonne mappée, vous devez choisir une valeur par défaut.
+                                  </p>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1048,23 +1057,36 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                     </div>
 
                     <div className="pt-8 border-t border-zinc-200 flex flex-col items-center gap-4">
-                      <Button 
-                        onClick={goToPreview} 
-                        disabled={importing || !columnMapping.name || !columnMapping.category || !columnMapping.zone}
-                        className="w-full max-w-sm bg-accent hover:bg-accent/90 text-white font-bold px-12 h-12 text-sm tracking-[1px] shadow-sm transition-all duration-300 active:scale-95 border-none"
-                      >
-                        {importing ? (
-                          <div className="flex items-center gap-3">
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            <span>CHARGEMENT DE L'APERÇU...</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <Save className="w-5 h-5" />
-                            <span>VÉRIFIER ET CHOISIR LES LIGNES</span>
-                          </div>
-                        )}
-                      </Button>
+                      {(() => {
+                        const isMappingValid = 
+                          importType === 'equipment' 
+                            ? (columnMapping.name && 
+                               (columnMapping.category !== 'non_mappe' || importDefaults.category) && 
+                               (columnMapping.zone !== 'non_mappe' || importDefaults.zone))
+                            : (columnMapping.zone && columnMapping.station);
+                        
+                        return (
+                          <Button 
+                            onClick={goToPreview} 
+                            disabled={importing || !isMappingValid}
+                            className={`w-full max-w-sm font-bold px-12 h-12 text-sm tracking-[1px] shadow-sm transition-all duration-300 active:scale-95 border-none ${
+                               !isMappingValid ? "bg-zinc-200 text-zinc-400 cursor-not-allowed" : "bg-accent hover:bg-accent/90 text-white"
+                            }`}
+                          >
+                            {importing ? (
+                              <div className="flex items-center gap-3">
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                                <span>LOGIQUE EN COURS...</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-3">
+                                <Save className="w-5 h-5" />
+                                <span>VÉRIFIER ET CHOISIR LES LIGNES</span>
+                              </div>
+                            )}
+                          </Button>
+                        );
+                      })()}
                       <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
                         <ShieldCheck size={12} className="text-zinc-300" />
                         Traitement sécurisé et vérification des doublons
