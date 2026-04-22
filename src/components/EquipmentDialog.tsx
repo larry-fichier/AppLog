@@ -99,7 +99,8 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser && !isBypass) {
+    const token = localStorage.getItem("helios_token");
+    if (!token && !isBypass) {
       toast.error("Veuillez vous connecter pour effectuer cette action.");
       return;
     }
@@ -111,17 +112,15 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
 
     setLoading(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const idToken = isBypass ? "demo-token" : token;
+      const userUid = isBypass ? "demo-admin-uid" : "";
       
       const payload = {
         name,
         category_id: category, // In PG, category is an ID
         status,
-        zone_id: location.zone || "Zone 1", 
-        station_id: location.station || "Station 1",
-        service_id: location.service || null,
-        bureau_id: location.office || null,
+        zone_id: location.zone || null, 
+        station_id: location.station || null,
         details,
       };
 
@@ -150,21 +149,21 @@ export function EquipmentDialog({ open, onOpenChange, item, activeRole = "agent_
   };
 
   const handleDelete = async () => {
-    if (!item?.id || (!auth.currentUser && !isBypass)) return;
+    const token = localStorage.getItem("helios_token");
+    if (!item?.id || (!token && !isBypass)) return;
     
     setLoading(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const idToken = isBypass ? "demo-token" : token;
+      const userUid = isBypass ? "demo-admin-uid" : "";
       
       const response = await fetch(`/api/equipment/${item.id}`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "x-user-uid": userUid || "",
+          "x-user-uid": userUid,
           "Authorization": `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ callerUid: userUid })
+        }
       });
 
       if (response.ok) {

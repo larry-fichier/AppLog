@@ -55,9 +55,14 @@ export function EquipmentDashboard({
   useEffect(() => {
     async function fetchSettings() {
       try {
-        const snap = await getDoc(doc(db, "config", "global"));
-        if (snap.exists()) {
-          setDynamicSettings(snap.data() as GlobalSettings);
+        const res = await fetch("/api/config");
+        if (res.ok) {
+          const data = await res.json();
+          setDynamicSettings({
+            categories: data.categories || [],
+            zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+            stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
+          } as any);
         }
       } catch (e) {
         console.error("Error fetching settings in dashboard", e);
@@ -72,16 +77,17 @@ export function EquipmentDashboard({
 
   useEffect(() => {
     async function fetchData() {
-      if (!auth.currentUser && !isBypass) return;
+      const token = localStorage.getItem("helios_token");
+      if (!token && !isBypass) return;
       
       setLoading(true);
       try {
-        const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-        const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+        const idToken = isBypass ? "demo-token" : token;
+        const userUid = isBypass ? "demo-admin-uid" : "";
         
         const response = await fetch("/api/equipment", {
           headers: {
-            "x-user-uid": userUid || "",
+            "x-user-uid": userUid,
             "Authorization": `Bearer ${idToken}`
           }
         });
@@ -185,14 +191,28 @@ export function EquipmentDashboard({
     ];
 
     try {
-      const currentUserId = auth.currentUser?.uid;
+      const token = localStorage.getItem("helios_token");
+      const idToken = isBypass ? "demo-token" : token;
+      
       for (const item of mockData) {
-        await addDoc(collection(db, "equipment"), {
-          ...item,
-          createdBy: currentUserId
+        await fetch("/api/equipment", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+            name: item.name,
+            category_id: item.category,
+            status: item.status,
+            zone_id: "operation",
+            station_id: null,
+            details: item.details
+          })
         });
       }
       toast.success("Inventaire de démonstration généré");
+      window.location.reload();
     } catch (e) {
       toast.error("Erreur lors de la génération");
     } finally {

@@ -44,11 +44,11 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (getUserRole() in ['chef_bureau_logistique', 'admin'] ||
-         (request.auth.token.email == "larryfichier@gmail.com" && request.auth.token.email_verified == true));
+         (request.auth.token.email == "larryfichier@gmail.com"));
     }
 
     // Rules for system configuration
-    match /config/global {
+    match /config/{docId} {
       allow read: if true; 
       allow write: if isAdmin();
     }

@@ -86,26 +86,40 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     }
     fetchSettings();
 
-    // Fetch Users (Keep Real-time listener for now as it's efficient, but updates go via API)
-    const unsubscribeUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-      const userList = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as AppUser));
-      setUsers(userList);
-    });
-
-    return () => {
-      unsubscribeUsers();
-    };
+    // Fetch Users
+    async function fetchUsers() {
+      try {
+        const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
+        const response = await fetch("/api/admin/users", {
+          headers: { 
+            "Authorization": `Bearer ${idToken}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUsers(data.map((u: any) => ({ ...u, uid: String(u.id) })));
+        }
+      } catch (error) {
+        console.error("Error fetching users", error);
+      }
+    }
+    fetchUsers();
+    
+    // Polling users every 30s as a fallback for missing real-time
+    const interval = setInterval(fetchUsers, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSaveSettings = async () => {
-    if (!auth.currentUser && !isBypass) {
+    const token = localStorage.getItem("helios_token");
+    if (!token && !isBypass) {
       toast.error("Veuillez vous connecter pour enregistrer les paramètres.");
       return;
     }
     setSaving(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser!.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser!.uid;
+      const idToken = isBypass ? "demo-token" : token;
+      const userUid = isBypass ? "demo-admin-uid" : "";
       
       const response = await fetch("/api/admin/config", {
         method: "POST",
@@ -130,10 +144,24 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     }
   };
 
-  const handleUpdateUserRole = async (uid: string, newRole: UserRole) => {
+  const handleUpdateUserRole = async (id: string, newRole: UserRole) => {
     try {
-      await updateDoc(doc(db, "users", uid), { role: newRole });
-      toast.success("Rôle utilisateur mis à jour");
+      const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
+      const response = await fetch(`/api/admin/users/${id}/role`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (response.ok) {
+        toast.success("Rôle utilisateur mis à jour");
+        // Update local state
+        setUsers(users.map(u => u.uid === id ? { ...u, role: newRole } : u));
+      } else {
+        throw new Error("Update failed");
+      }
     } catch (error) {
       toast.error("Erreur lors de la mise à jour du rôle");
     }
@@ -141,28 +169,28 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUser.email || !newUser.password) return;
+    if ((!newUser.email && !newUser.username) || !newUser.password) return;
     
     setIsCreatingUser(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
       
       const response = await fetch("/api/admin/users", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "x-user-uid": userUid || "",
           "Authorization": `Bearer ${idToken}`
         },
-        body: JSON.stringify({ ...newUser }),
+        body: JSON.stringify({ ...newUser, username: newUser.username || newUser.email.split('@')[0] }),
       });
       
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
       
       toast.success("Utilisateur créé avec succès");
-      setNewUser({ email: "", password: "", displayName: "", role: "agent_logistique" });
+      setNewUser({ email: "", password: "", displayName: "", role: "agent_logistique" as UserRole });
+      // Refresh list
+      window.location.reload();
     } catch (error: any) {
       toast.error(`Erreur: ${error.message}`);
     } finally {
@@ -170,18 +198,16 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     }
   };
 
-  const handleDeleteUser = async (uid: string) => {
+  const handleDeleteUser = async (id: string) => {
     if (!confirm("Êtes-vous sûr de vouloir supprimer cet utilisateur ?")) return;
     
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
       
-      const response = await fetch(`/api/admin/users/${uid}`, {
+      const response = await fetch(`/api/admin/users/${id}`, {
         method: "DELETE",
         headers: { 
           "Content-Type": "application/json",
-          "x-user-uid": userUid || "",
           "Authorization": `Bearer ${idToken}`
         }
       });
@@ -192,18 +218,14 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
       }
       
       toast.success("Utilisateur supprimé");
+      setUsers(users.filter(u => u.uid !== id));
     } catch (error: any) {
       toast.error(`Erreur: ${error.message}`);
     }
   };
 
   const handleResetPassword = async (email: string) => {
-    try {
-      await sendPasswordResetEmail(auth, email);
-      toast.success(`Email de réinitialisation envoyé à ${email}`);
-    } catch (error: any) {
-      toast.error(`Erreur: ${error.message}`);
-    }
+    toast.info("Veuillez demander à l'utilisateur de changer son mot de passe ou recréez son compte.");
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -298,11 +320,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     // Fetch existing equipment to detect duplicates
     setImporting(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser?.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser?.uid;
+      const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
       const response = await fetch("/api/equipment", {
         headers: {
-          "x-user-uid": userUid || "",
           "Authorization": `Bearer ${idToken}`
         }
       });
@@ -324,7 +344,8 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   };
 
   const processImport = async () => {
-    if (!auth.currentUser && !isBypass) {
+    const token = localStorage.getItem("helios_token");
+    if (!token && !isBypass) {
       toast.error("Session expirée. Veuillez vous reconnecter.");
       return;
     }
@@ -336,8 +357,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     
     setImporting(true);
     try {
-      const idToken = isBypass ? "demo-token" : await auth.currentUser!.getIdToken();
-      const userUid = isBypass ? "demo-admin-uid" : auth.currentUser!.uid;
+      const idToken = isBypass ? "demo-token" : localStorage.getItem("helios_token");
       
       const selectedData = rawFileData.filter((_, idx) => selectedRowIndices.has(idx));
 
@@ -365,7 +385,6 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "x-user-uid": userUid,
           "Authorization": `Bearer ${idToken}`
         },
         body: JSON.stringify({ data: formattedData }),
@@ -418,9 +437,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
           <h2 className="text-2xl font-black text-text-dark tracking-tight">Configuration Super User</h2>
           <p className="text-sm text-muted-foreground">Contrôle total du système HELIOS.</p>
         </div>
-        <Button onClick={handleSaveSettings} disabled={saving} className="bg-accent hover:bg-accent/90 text-white font-bold px-8">
+        <Button onClick={handleSaveSettings} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-10 shadow-lg shadow-emerald-200 transition-all hover:scale-105 active:scale-95">
           {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-          Enregistrer globalement
+          ENREGISTRER LA CONFIGURATION
         </Button>
       </div>
 
@@ -703,7 +722,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                                   className="h-8 w-8 p-0 text-red-600 border-red-200 bg-red-50 hover:bg-red-100 hover:text-red-700"
                                   onClick={() => handleDeleteUser(user.uid)}
                                   title="Supprimer définitivement le compte"
-                                  disabled={user.uid === auth.currentUser?.uid}
+                                  disabled={user.uid === String(localStorage.getItem("helios_user") ? JSON.parse(localStorage.getItem("helios_user")!).id : "")}
                                 >
                                   <Trash2 size={14} />
                                 </Button>

@@ -14,102 +14,91 @@ import { toast } from "sonner";
 import { AppUser, UserRole } from "@/types";
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<AppUser | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [dynamicSettings, setDynamicSettings] = useState<GlobalSettings | null>(null);
   const [isBypass, setIsBypass] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string>("dashboard");
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
+    // Local Auth initialization
+    const initAuth = async () => {
+      const storedUser = localStorage.getItem("helios_user");
+      const token = localStorage.getItem("helios_token");
       
-      // Also fetch dynamic settings
+      if (storedUser && token) {
+        setUser(JSON.parse(storedUser));
+      }
+      
+      // Fetch dynamic settings from local API
       try {
-        const snap = await getDoc(doc(db, "config", "global"));
-        if (snap.exists()) setDynamicSettings(snap.data() as GlobalSettings);
+        const response = await fetch("/api/config");
+        if (response.ok) {
+          const data = await response.json();
+          // Map backend format to GlobalSettings expected by frontend
+          setDynamicSettings({
+            categories: data.categories || [],
+            zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
+            stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
+            roles: [
+              { id: "admin", label: "Super Administrateur" },
+              { id: "chef_bureau_logistique", label: "Chef Bureau Logistique" },
+              { id: "agent_logistique", label: "Agent Logistique" }
+            ]
+          } as any);
+        }
       } catch (e) {
         console.error("Config fetch error", e);
       }
-
-      if (currentUser) {
-        // Fetch role from Firestore
-        try {
-          const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-          if (userDoc.exists()) {
-            setUserProfile(userDoc.data() as AppUser);
-          } else {
-            // Default role if not found
-            const defaultProfile: AppUser = {
-              uid: currentUser.uid,
-              email: currentUser.email || "",
-              role: "agent_logistique"
-            };
-            await setDoc(doc(db, "users", currentUser.uid), defaultProfile);
-            setUserProfile(defaultProfile);
-          }
-        } catch (e) {
-          console.error("Error fetching user profile", e);
-        }
-      } else {
-        setUserProfile(null);
-      }
       setLoading(false);
-    });
-    return () => unsubscribe();
+    };
+
+    initAuth();
   }, []);
 
-  const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login failed", error);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Logout failed", error);
-    }
+  const handleLogout = () => {
+    localStorage.removeItem("helios_token");
+    localStorage.removeItem("helios_user");
+    setUser(null);
+    setIsBypass(false);
+    toast.success("Déconnexion réussie.");
+    window.location.reload();
   };
 
   const handleAuthAction = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     try {
-      if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
-        toast.success("Compte créé avec succès !");
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-        toast.success("Connexion réussie.");
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Échec de connexion.");
       }
+
+      const data = await response.json();
+      localStorage.setItem("helios_token", data.token);
+      localStorage.setItem("helios_user", JSON.stringify(data.user));
+      setUser(data.user);
+      toast.success("Bienvenue, " + (data.user.displayName || data.user.email));
     } catch (error: any) {
       console.error("Auth action failed", error);
-      if (error.code === "auth/operation-not-allowed") {
-        toast.error("L'authentification par email n'est pas activée dans la console Firebase.");
-      } else if (error.code === "auth/email-already-in-use") {
-        toast.error("Cet email est déjà utilisé.");
-      } else if (error.code === "auth/invalid-credential") {
-        toast.error("Identifiants incorrects.");
-      } else {
-        toast.error("Échec de l'authentification.");
-      }
+      toast.error(error.message);
     } finally {
       setIsLoggingIn(false);
     }
   };
 
-  const currentRole = isBypass ? "chef_bureau_logistique" : userProfile?.role || "agent_logistique";
-  const userDisplayName = isBypass ? "Administrateur Démo" : userProfile?.displayName || user?.email || "Utilisateur";
-  const isAdmin = currentRole === "admin" || currentRole === "chef_bureau_logistique";
+  const currentRole = isBypass ? "admin" : user?.role || "agent_logistique";
+  const userDisplayName = isBypass ? "Administrateur Démo" : user?.displayName || user?.email || "Utilisateur";
+  const isAdmin = currentRole === "admin" || currentRole === "chef_bureau_logistique" || currentRole === "super_admin";
   const isReadOnly = currentRole === "csph" || currentRole === "chef_service_administratif";
 
   if (loading) {
@@ -262,8 +251,8 @@ export default function App() {
                        <div className="relative">
                           <LogIn size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#bdc3c7]" />
                           <input 
-                            type="email"
-                            placeholder="votre.nom@logistix.com"
+                            type="text"
+                            placeholder="Identifiant (Email ou Username)"
                             className="w-full pl-12 pr-4 h-12 bg-[#f8fafc] border border-border-custom rounded-xl focus:ring-4 focus:ring-accent/10 focus:border-accent outline-none transition-all font-medium text-sm"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
@@ -289,29 +278,21 @@ export default function App() {
                     className="w-full h-12 bg-accent hover:bg-accent/90 text-white font-black text-sm tracking-widest transition-all hover:scale-[1.02] shadow-lg shadow-accent/20"
                     disabled={isLoggingIn}
                   >
-                    {isLoggingIn ? <Loader2 className="animate-spin" /> : isRegistering ? "CRÉER MON COMPTE" : "ACCÉDER AU PORTAIL"}
+                    {isLoggingIn ? <Loader2 className="animate-spin" /> : "ACCÉDER AU PORTAIL"}
                   </Button>
 
                   <div className="text-center space-y-4">
-                    <button 
-                      type="button"
-                      onClick={() => setIsRegistering(!isRegistering)}
-                      className="text-[11px] font-bold text-accent hover:underline uppercase tracking-wider"
-                    >
-                      {isRegistering ? "Déjà un compte ? Se connecter" : "Pas de compte ? S'enregistrer"}
-                    </button>
-
                     <div className="pt-2 flex flex-col gap-2">
                        <button
                          type="button"
                          onClick={() => {
-                           setEmail("admin@logistix.com");
-                           setPassword("password123");
+                           setEmail("larryfichier@gmail.com");
+                           setPassword("admin123");
                            toast.info("Identifiants de test appliqués. Cliquez sur le bouton principal.");
                          }}
                          className="text-[10px] font-bold text-[#b2bec3] hover:text-accent border border-[#f1f2f6] px-4 py-2 rounded-full transition-all uppercase tracking-widest"
                        >
-                         Utiliser un compte de test
+                         Utiliser le compte Admin (larryfichier)
                        </button>
 
                        <button
