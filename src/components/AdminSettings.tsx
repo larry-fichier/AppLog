@@ -427,10 +427,10 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
           return {
             name: row[columnMapping.name] || "Actif sans nom",
-            category: columnMapping.category && columnMapping.category !== "non_mappe" ? row[columnMapping.category] : importDefaults.category,
-            zone: columnMapping.zone && columnMapping.zone !== "non_mappe" ? row[columnMapping.zone] : importDefaults.zone,
-            station: columnMapping.station && columnMapping.station !== "non_mappe" ? row[columnMapping.station] : importDefaults.station,
-            status: columnMapping.status && columnMapping.status !== "non_mappe" ? row[columnMapping.status] : "fonctionnel",
+            category: (columnMapping.category && columnMapping.category !== "non_mappe" && row[columnMapping.category]) ? row[columnMapping.category] : importDefaults.category,
+            zone: (columnMapping.zone && columnMapping.zone !== "non_mappe" && row[columnMapping.zone]) ? row[columnMapping.zone] : importDefaults.zone,
+            station: (columnMapping.station && columnMapping.station !== "non_mappe" && row[columnMapping.station]) ? row[columnMapping.station] : importDefaults.station,
+            status: (columnMapping.status && columnMapping.status !== "non_mappe" && row[columnMapping.status]) ? row[columnMapping.status] : "fonctionnel",
             details: details
           };
         });
@@ -581,6 +581,13 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   <Plus size={14} className="mr-2" />
                   Nouveau Service
                 </Button>
+
+                <div className="mt-4 p-3 bg-emerald-50 border border-emerald-100 rounded-lg flex items-center gap-3">
+                  <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-md"><Save size={14} /></div>
+                  <p className="text-[9px] font-bold text-emerald-800 uppercase tracking-wider">
+                    Enregistrez en haut de la page pour valider.
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -633,6 +640,13 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   <Plus size={14} className="mr-2" />
                   Nouveau Bureau
                 </Button>
+
+                <div className="mt-4 p-3 bg-emerald-50 border border-emerald-100 rounded-lg flex items-center gap-3">
+                  <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-md"><Save size={14} /></div>
+                  <p className="text-[9px] font-bold text-emerald-800 uppercase tracking-wider">
+                    Enregistrez en haut de la page pour valider.
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -659,6 +673,14 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   <Plus size={12} className="mr-2" />
                   Catégorie
                 </Button>
+                <div className="lg:col-span-2 mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg"><Save size={18} /></div>
+                    <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                      Pensez à cliquer sur "Enregistrer la Configuration" en haut pour appliquer vos modifications.
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -991,10 +1013,13 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                               </Select>
                             </div>
 
-                            {(columnMapping[field.id] === "" || columnMapping[field.id] === "non_mappe") && (field.id === 'category' || field.id === 'zone' || field.id === 'station') && (
+                            {importType === 'equipment' && (field.id === 'category' || field.id === 'zone' || field.id === 'station') && (
                               <div className="animate-in slide-in-from-top-2 duration-300 space-y-2 bg-white/60 p-3 rounded-lg border border-dashed border-zinc-200">
                                 <p className="text-[9px] font-black text-accent uppercase tracking-widest flex items-center gap-2">
-                                  <ChevronRight size={10} /> Définir par défaut pour tout le fichier
+                                  <ChevronRight size={10} /> 
+                                  {columnMapping[field.id] && columnMapping[field.id] !== "non_mappe" 
+                                    ? "Valeur de repli (si colonne vide)" 
+                                    : "Valeur par défaut (tout le fichier)"}
                                 </p>
                                 <Select 
                                   value={importDefaults[field.id]} 

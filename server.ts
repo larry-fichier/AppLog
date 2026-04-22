@@ -40,11 +40,14 @@ async function startServer() {
       console.error("[DB] ALERTE: Aucune configuration PostgreSQL trouvée.");
     }
     try {
-      await query("SELECT 1");
+      const dbStatusResult = await query("SELECT 1");
       console.log("[DB] Connexion PostgreSQL vérifiée.");
       
-      // Extension pour UUID si besoin (ne fonctionne que sur PG réel avec droits superuser)
-      try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
+      // Only for Real PG
+      const dbStatus = (await import("./src/lib/db.ts")).default;
+      if (dbStatus.isRealPostgres) {
+        try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
+      }
 
       await query(`
         CREATE TABLE IF NOT EXISTS users (

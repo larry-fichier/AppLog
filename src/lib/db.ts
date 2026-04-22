@@ -3,6 +3,7 @@ const { Pool } = pkg;
 import { newDb } from 'pg-mem';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 // Local persistence path for pg-mem mode
 const JOURNAL_PATH = path.join(process.cwd(), 'helios_journal.log');
@@ -44,6 +45,14 @@ async function initializeDB() {
   // Fallback to pg-mem
   console.log('[DB] Initialisation du mode En-Mémoire (pg-mem).');
   const memDb = newDb();
+  
+  // Register gen_random_uuid for pg-mem compatibility
+  memDb.public.registerFunction({
+    name: 'gen_random_uuid',
+    returns: memDb.registry.getType('uuid'),
+    implementation: () => crypto.randomUUID(),
+  });
+
   const pgAdapter = memDb.adapters.createPg();
   pool = new pgAdapter.Pool();
   isRealPostgres = false;
