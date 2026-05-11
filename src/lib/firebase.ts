@@ -27,6 +27,7 @@ export const signInWithEmailAndPassword = async (authObj: any, email: string, pa
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include", // ✅ Inclure les cookies
     body: JSON.stringify({ email, password: pass })
   });
 
@@ -36,16 +37,29 @@ export const signInWithEmailAndPassword = async (authObj: any, email: string, pa
   }
 
   const data = await response.json();
-  localStorage.setItem("helios_token", data.token);
+  
+  // ✅ Stocker SEULEMENT les infos utilisateur (le token est dans le cookie httpOnly)
   localStorage.setItem("helios_user", JSON.stringify(data.user));
   
   return { user: { ...data.user, uid: String(data.user.id) } };
 };
 
 export const signOut = async () => {
-  removeAuthToken();
   removeUserData();
-  window.location.reload(); // Hard reload to clear all states
+  sessionStorage.clear();
+  
+  // ✅ Optionnel: avertir le serveur de la déconnexion
+  try {
+    await fetch('/api/auth/logout', { 
+      method: 'POST',
+      credentials: 'include'
+    });
+  } catch (e) {
+    console.error('Logout API call failed:', e);
+  }
+  
+  // ✅ Redirection simple (pas de hard reload)
+  window.location.href = '/login';
 };
 
 // Dummy exports for types and other used functions

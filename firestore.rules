@@ -43,13 +43,12 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (getUserRole() in ['chef_bureau_logistique', 'admin'] ||
-         (request.auth.token.email == "larryfichier@gmail.com"));
+        getUserRole() in ['chef_bureau_logistique', 'admin'];
     }
 
     // Rules for system configuration
     match /config/{docId} {
-      allow read: if true; 
+      allow read: if canConsult(); 
       allow write: if isAdmin();
     }
 
@@ -65,10 +64,8 @@ service cloud.firestore {
 
     // Rules for equipment
     match /equipment/{equipmentId} {
-      // Temporarily open for Bypass mode (Demo purposes)
-      // In production, use: allow read: if canConsult();
-      allow read: if true; 
-      allow write: if canModify() || request.auth == null; // null check to allow bypass write for demos
+      allow read: if canConsult(); 
+      allow write: if canModify();
     }
 
     // Rules for users

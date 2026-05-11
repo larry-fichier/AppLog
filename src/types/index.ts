@@ -41,4 +41,5 @@ export interface AppUser {
   email: string;
   role: UserRole;
   displayName?: string;
+  username?: string;
 }

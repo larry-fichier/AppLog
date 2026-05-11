@@ -4,26 +4,32 @@ import { query } from '../db.ts';
 import { config } from '../config.ts';
 
 export class AuthService {
-  static async login(email: string, password: string) {
-    // Note: On supporte email ou username pour la flexibilité
+  static async login(identifier: string, password: string) {
+    // ✅ Message d'erreur générique pour ne pas révéler si l'email existe
+    const errorMessage = "Identifiants invalides";
+
+    // Supporte email OU username comme identifiant
     const result = await query(
-      "SELECT * FROM users WHERE (email = $1 OR username = $1) AND deleted_at IS NULL", 
-      [email]
+      `SELECT * FROM users 
+       WHERE (email = $1 OR username = $1) 
+         AND deleted_at IS NULL 
+       LIMIT 1`,
+      [identifier]
     );
 
     if (result.rows.length === 0) {
-      throw new Error("Utilisateur non trouvé");
+      throw new Error(errorMessage);
     }
 
     const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
-    
+
     if (!validPassword) {
-      throw new Error("Mot de passe incorrect");
+      throw new Error(errorMessage);
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, username: user.username, role: user.role },
       config.jwtSecret,
       { expiresIn: '24h' }
     );
@@ -31,10 +37,10 @@ export class AuthService {
     return {
       token,
       user: {
-        id: user.id,
-        email: user.email,
+        id:          user.id,
+        username:    user.username,
         displayName: user.display_name,
-        role: user.role
+        role:        user.role,
       }
     };
   }

@@ -36,7 +36,6 @@ function setupMemoryDB() {
   console.log('[DB] Mode de secours : Base de données En-Mémoire activée.');
   const memDb = newDb();
   
-  // Register engine functions
   memDb.public.registerFunction({
     name: 'gen_random_uuid',
     returns: (memDb as any).getType('uuid'),
@@ -56,43 +55,47 @@ export async function query(text: string, params?: any[]) {
 export async function initSchema() {
   console.log('[DB] Initialisation du schéma...');
   
-  // Extensions (uniquement PG réel)
   if (isRealPostgres) {
     try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
+
+    // ── Migration : rendre email nullable si ce n'est pas encore fait ────────
+    try {
+      await query(`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`);
+      console.log('[DB] Migration: colonne email rendue nullable.');
+    } catch (e) {
+      // Colonne déjà nullable ou table inexistante — on ignore
+    }
   }
 
-  // Schéma exact de l'utilisateur (UUID)
-  await query(`
-    CREATE TABLE IF NOT EXISTS users (
+  const tables = [
+    // email est maintenant NULL par défaut (identifiant = username)
+    `CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      username VARCHAR(128) UNIQUE,
-      email VARCHAR(255) UNIQUE NOT NULL,
+      username VARCHAR(128) UNIQUE NOT NULL,
+      email VARCHAR(255) UNIQUE,
       password_hash TEXT,
       display_name VARCHAR(255),
       role VARCHAR(50) DEFAULT 'agent_logistique',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       deleted_at TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS categories (
+    )`,
+    `CREATE TABLE IF NOT EXISTS categories (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       code VARCHAR(50) UNIQUE NOT NULL,
       label VARCHAR(100) NOT NULL,
       is_active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS zones (
+    )`,
+    `CREATE TABLE IF NOT EXISTS zones (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name VARCHAR(150) UNIQUE NOT NULL,
       is_active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS stations (
+    )`,
+    `CREATE TABLE IF NOT EXISTS stations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       zone_id UUID REFERENCES zones(id),
       name VARCHAR(150) NOT NULL,
@@ -100,51 +103,58 @@ export async function initSchema() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(zone_id, name)
-    );
-
-    CREATE TABLE IF NOT EXISTS category_fields (
+    )`,
+    `CREATE TABLE IF NOT EXISTS category_fields (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       category_id UUID REFERENCES categories(id),
       label VARCHAR(100) NOT NULL,
       type VARCHAR(50) DEFAULT 'text',
       sort_order INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS equipment (
+    )`,
+    `CREATE TABLE IF NOT EXISTS equipment (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name VARCHAR(200) NOT NULL,
-      category_id UUID REFERENCES categories(id),
-      status VARCHAR(50) DEFAULT 'fonctionnel',
+      category_id UUID NOT NULL REFERENCES categories(id),
+      status VARCHAR(50) DEFAULT 'fonctionnel' NOT NULL,
       zone_id UUID REFERENCES zones(id),
       station_id UUID REFERENCES stations(id),
       service_id UUID REFERENCES zones(id),
       bureau_id UUID REFERENCES stations(id),
-      created_by UUID REFERENCES users(id),
-      description TEXT,
-      serial_number VARCHAR(100),
-      purchase_date DATE,
-      qr_code_data TEXT,
+      created_by UUID NOT NULL REFERENCES users(id),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       deleted_at TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS equipment_details (
+    )`,
+    `CREATE TABLE IF NOT EXISTS equipment_details (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       equipment_id UUID REFERENCES equipment(id),
       field_key VARCHAR(100) NOT NULL,
       field_value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS movements (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      equipment_id UUID REFERENCES equipment(id),
-      type VARCHAR(50) NOT NULL,
-      performed_by UUID REFERENCES users(id),
-      note TEXT,
+    )`,
+    `CREATE TABLE IF NOT EXISTS movements (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id UUID NOT NULL REFERENCES equipment(id),
+      type         VARCHAR(50) NOT NULL
+                   CHECK (type IN ('entree','sortie','transfert','retour','ajustement','deploiement')),
+      performed_by UUID NOT NULL REFERENCES users(id),
+      from_zone_id    UUID REFERENCES zones(id),
+      from_station_id UUID REFERENCES stations(id),
+      to_zone_id    UUID REFERENCES zones(id),
+      to_station_id UUID REFERENCES stations(id),
+      previous_status VARCHAR(50),
+      new_status      VARCHAR(50),
+      date_deploiement    DATE,
+      date_retour_prevue  DATE,
+      note       TEXT,
+      reference  VARCHAR(100),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    )`
+  ];
+
+  for (const sql of tables) {
+    await query(sql);
+  }
+
   console.log('[DB] Schéma prêt.');
 }
 

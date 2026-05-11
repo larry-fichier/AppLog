@@ -15,21 +15,19 @@ export const getUserData = () => {
 export const removeUserData = () => localStorage.removeItem("helios_user");
 
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  const token = getAuthToken();
   const headers = {
     ...options.headers as any,
     "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {})
   };
 
   const response = await fetch(endpoint, {
     ...options,
-    headers
+    headers,
+    credentials: 'include' // ✅ Inclure les cookies httpOnly automatiquement
   });
 
   if (response.status === 401) {
     // Session expired
-    removeAuthToken();
     removeUserData();
     // Logic to redirect to login could go here if managed by state
   }

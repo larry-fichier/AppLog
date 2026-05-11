@@ -44,7 +44,6 @@ export class EquipmentService {
   }) {
     const { name, category_id, status, zone_id, station_id, created_by, details } = data;
     
-    // On peuple à la fois zone/station et service/bureau pour la compatibilité schéma
     const equipRes = await query(`
       INSERT INTO equipment (name, category_id, status, zone_id, station_id, service_id, bureau_id, created_by)
       VALUES ($1, $2, $3, $4, $5, $4, $5, $6)
@@ -63,5 +62,57 @@ export class EquipmentService {
     }
 
     return equipmentId;
+  }
+
+  /**
+   * Met à jour un équipement existant (nom, statut, catégorie, zone, station, détails)
+   */
+  static async updateEquipment(id: string, data: {
+    name?: string;
+    category_id?: string;
+    status?: string;
+    zone_id?: string;
+    station_id?: string;
+    details?: Record<string, any>;
+  }) {
+    const { name, category_id, status, zone_id, station_id, details } = data;
+
+    await query(`
+      UPDATE equipment
+      SET name       = COALESCE($1, name),
+          category_id = COALESCE($2, category_id),
+          status     = COALESCE($3, status),
+          zone_id    = COALESCE($4, zone_id),
+          station_id = COALESCE($5, station_id),
+          service_id = COALESCE($4, service_id),
+          bureau_id  = COALESCE($5, bureau_id),
+          updated_at = NOW()
+      WHERE id = $6 AND deleted_at IS NULL
+    `, [name, category_id, status, zone_id, station_id, id]);
+
+    // Mettre à jour les détails : supprimer les anciens et réinsérer
+    if (details && Object.keys(details).length > 0) {
+      await query(`DELETE FROM equipment_details WHERE equipment_id = $1`, [id]);
+      for (const [key, val] of Object.entries(details)) {
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          await query(`
+            INSERT INTO equipment_details (equipment_id, field_key, field_value)
+            VALUES ($1, $2, $3)
+          `, [id, key, String(val)]);
+        }
+      }
+    }
+
+    return id;
+  }
+
+  /**
+   * Supprime (soft delete) un équipement
+   */
+  static async deleteEquipment(id: string) {
+    await query(`
+      UPDATE equipment SET deleted_at = NOW() WHERE id = $1
+    `, [id]);
+    return id;
   }
 }

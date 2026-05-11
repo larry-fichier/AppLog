@@ -1,31 +1,34 @@
 import jwt from 'jsonwebtoken';
 import { query } from '../db.ts';
 import { config } from '../config.ts';
+import { logger } from '../logger.ts';
 
 export const authenticateToken = async (req: any, res: any, next: any) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    // Support de contournement (demo)
-    const bypassUid = req.headers['x-user-uid'];
-    if (bypassUid === "demo-admin-uid") {
-      req.user = { id: '00000000-0000-0000-0000-000000000000', role: "admin", email: config.adminEmail };
-      return next();
+    // ✅ Récupérer le token depuis le cookie httpOnly OU depuis l'Authorization header
+    let token = req.cookies?.auth_token;
+    
+    if (!token) {
+      const authHeader = req.headers['authorization'];
+      token = authHeader && authHeader.split(' ')[1];
     }
 
     if (!token) {
-      return res.status(401).json({ error: "Session expirée ou invalide. Veuillez vous connecter." });
+      return res.status(401).json({ error: "Non authentifié" });
     }
 
     try {
       const decoded: any = jwt.verify(token, config.jwtSecret);
       if (!decoded || !decoded.id) {
-        return res.status(403).json({ error: "Accès refusé. Token invalide." });
+        return res.status(403).json({ error: "Token invalide" });
       }
 
       // Vérification en base (UUID)
-      const result = await query("SELECT id, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL", [decoded.id]);
+      const result = await query(
+        "SELECT id, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL", 
+        [decoded.id]
+      );
+      
       if (result.rows.length === 0) {
         return res.status(401).json({ error: "Utilisateur non trouvé" });
       }
@@ -33,18 +36,24 @@ export const authenticateToken = async (req: any, res: any, next: any) => {
       req.user = result.rows[0];
       next();
     } catch (err) {
-      return res.status(403).json({ error: "Accès refusé. Token expiré ou corrompu." });
+      // ✅ Logger les tentatives d'accès invalides
+      logger.security('AUTH_FAILED', 'low', {
+        ip: req.ip,
+        path: req.path,
+        error: err instanceof Error ? err.message : 'Unknown error'
+      });
+      return res.status(403).json({ error: "Session expirée" });
     }
   } catch (globalErr) {
     console.error("[Auth] Middleware Error:", globalErr);
-    res.status(500).json({ error: "Erreur interne de sécurité" });
+    res.status(500).json({ error: "Erreur interne" });
   }
 };
 
 export const authorize = (roles: string[]) => {
   return (req: any, res: any, next: any) => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Permission insuffisante." });
+      return res.status(403).json({ error: "Permission insuffisante" });
     }
     next();
   };
