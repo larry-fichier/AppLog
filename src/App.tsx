@@ -149,7 +149,7 @@ export default function App() {
               { id: "chef_bureau_logistique",     label: "Chef Bureau Logistique" },
               { id: "chef_service_administratif", label: "Chef Service Administratif" },
               { id: "agent_logistique",           label: "Agent Logistique" },
-              { id: "csph",                       label: "CSPH" },
+              { id: "csph",                       label: "Chef Suivi Projet HELIOS" },
             ],
           } as any);
         }
@@ -345,7 +345,9 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <div className="text-right">
                     <div className="text-sm font-black text-slate-800 leading-tight">{userDisplayName}</div>
-                    <div className="text-[10px] text-slate-400 font-bold">Chef Service Administratif</div>
+                    <div className="text-[10px] text-slate-400 font-bold">
+                      {dynamicSettings?.roles?.find((r: any) => r.id === currentRole)?.label || "Superviseur"}
+                    </div>
                   </div>
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-500 flex items-center justify-center text-white font-black text-sm shadow">
                     {getInitial(user)}
