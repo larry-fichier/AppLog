@@ -355,20 +355,18 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   const [journalSearch, setJournalSearch] = useState("");
 
   const fetchAll = useCallback(async () => {
-    const token = isBypass ? "demo-token" : localStorage.getItem("helios_token") || "";
-    const headers = { "Authorization": `Bearer ${token}` };
-    try {
-      const [eqRes, mvRes] = await Promise.all([
-        fetch("/api/equipment", { headers }),
-        fetch("/api/movements", { headers }),
-      ]);
-      if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
-      if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
-      else setMovements([]);
-      setLastRefresh(new Date());
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [isBypass]);
+  try {
+    const [eqRes, mvRes] = await Promise.all([
+      fetch("/api/equipment", { credentials: "include" }),
+      fetch("/api/movements", { credentials: "include" }),
+    ]);
+    if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
+    if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
+    else setMovements([]);
+    setLastRefresh(new Date());
+  } catch (e) { console.error(e); }
+  finally { setLoading(false); }
+}, [isBypass]);
 
   useEffect(() => { fetchAll(); const t = setInterval(fetchAll, 60000); return () => clearInterval(t); }, [fetchAll]);
 
