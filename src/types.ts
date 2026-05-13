@@ -1,6 +1,6 @@
 export type UserRole = 
   | "admin" 
-  | "chef_bureau_logistique" 
+  
   | "agent_logistique" 
   | "csph" 
   | "chef_service_administratif";

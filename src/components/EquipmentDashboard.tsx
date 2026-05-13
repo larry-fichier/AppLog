@@ -45,7 +45,7 @@ function getStatusConfig(status: string) {
 
 interface Props {
   defaultCategory?: string;
-  activeRole?: "csph" | "chef_service_administratif" | "agent_logistique" | "chef_bureau_logistique" | "admin";
+  activeRole?: "csph" | "chef_service_administratif" | "agent_logistique" | "admin";
   isBypass?: boolean;
 }
 
@@ -151,7 +151,7 @@ export function EquipmentDashboard({
       return e.category_id === catId;
     }).length;
 
-  const canEdit = ["agent_logistique", "chef_bureau_logistique", "admin"].includes(activeRole);
+  const canEdit = ["agent_logistique", "admin"].includes(activeRole);
 
   useEffect(() => { setCurrentPage(1); }, [searchTerm, activeCategory, statusFilter]);
 

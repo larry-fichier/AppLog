@@ -1,4 +1,3 @@
-
 /**
  * STUB: This file replaces the real Firebase SDK to remove Google Cloud dependencies.
  * It provides the same interface to avoid breaking existing components,
@@ -78,8 +77,7 @@ export const getDoc = async (docRef: any) => {
           zones: (data.zones || []).map((z: any) => ({ id: z.id, label: z.name })),
           stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
           roles: [
-            { id: "admin", label: "Super Administrateur" },
-            { id: "chef_bureau_logistique", label: "Chef Bureau Logistique" },
+            { id: "admin", label: "Administrateur" },
             { id: "agent_logistique", label: "Agent Logistique" }
           ]
         }) 

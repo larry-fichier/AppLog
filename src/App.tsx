@@ -20,6 +20,70 @@ import { AppUser, UserRole } from "@/types";
 import { MovementsPage } from "@/components/MovementsPage";
 import { SupervisionDashboard } from "@/components/SupervisionDashboard";
 
+// ── Intercepteur fetch : refresh automatique du token ─────────
+let isRefreshing = false;
+let pendingRequests: Array<(retry: boolean) => void> = [];
+
+const originalFetch = window.fetch.bind(window);
+
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  // Ne pas intercepter la route de refresh elle-même
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+  if (url.includes("/api/auth/refresh") || url.includes("/api/auth/login")) {
+    return originalFetch(input, init);
+  }
+
+  const response = await originalFetch(input, init);
+
+  if (response.status === 401 || response.status === 403) {
+    // Si un refresh est déjà en cours, attendre sa résolution
+    if (isRefreshing) {
+      return new Promise((resolve) => {
+        pendingRequests.push((success) => {
+          if (success) resolve(originalFetch(input, init));
+          else resolve(response);
+        });
+      });
+    }
+
+    isRefreshing = true;
+    try {
+      const refreshRes = await originalFetch("/api/auth/refresh", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (refreshRes.ok) {
+        // Mettre à jour l'utilisateur en localStorage
+        const data = await refreshRes.json();
+        if (data.user) {
+          localStorage.setItem("helios_user", JSON.stringify(data.user));
+        }
+        // Résoudre les requêtes en attente
+        pendingRequests.forEach(cb => cb(true));
+        pendingRequests = [];
+        // Relancer la requête originale
+        return originalFetch(input, init);
+      } else {
+        // Refresh échoué → déconnexion propre
+        pendingRequests.forEach(cb => cb(false));
+        pendingRequests = [];
+        localStorage.removeItem("helios_user");
+        window.dispatchEvent(new CustomEvent("helios:session-expired"));
+        return response;
+      }
+    } catch {
+      pendingRequests.forEach(cb => cb(false));
+      pendingRequests = [];
+      return response;
+    } finally {
+      isRefreshing = false;
+    }
+  }
+
+  return response;
+};
+
 // ── Icône dynamique par label de catégorie ─────────────────
 function getCatIcon(label: string = "", size = 16) {
   const l = label.toLowerCase();
@@ -97,6 +161,17 @@ export default function App() {
   const notifRef = React.useRef<EventSource | null>(null);
   const notifIdRef = React.useRef(0);
 
+  // ── Écoute expiration de session (déclenchée par l'intercepteur fetch) ──
+  React.useEffect(() => {
+    const onExpired = () => {
+      setUser(null);
+      if (notifRef.current) { notifRef.current.close(); }
+      toast.error("Votre session a expiré. Veuillez vous reconnecter.");
+    };
+    window.addEventListener("helios:session-expired", onExpired);
+    return () => window.removeEventListener("helios:session-expired", onExpired);
+  }, []);
+
   React.useEffect(() => {
     if (!user) return;
     const es = new EventSource("/api/events", { withCredentials: true });
@@ -145,8 +220,7 @@ export default function App() {
             zones:    (data.zones    || []).map((z: any) => ({ id: z.id, label: z.name })),
             stations: (data.stations || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
             roles: [
-              { id: "admin",                      label: "Super Administrateur" },
-              { id: "chef_bureau_logistique",     label: "Chef Bureau Logistique" },
+              { id: "admin",                      label: "Administrateur" },
               { id: "chef_service_administratif", label: "Chef Service Administratif" },
               { id: "agent_logistique",           label: "Agent Logistique" },
               { id: "csph",                       label: "Chef Suivi Projet HELIOS" },
@@ -229,7 +303,7 @@ export default function App() {
 
   const currentRole     = user?.role || "agent_logistique";
   const userDisplayName = getDisplayName(user);
-  const isAdmin         = ["admin", "chef_bureau_logistique"].includes(currentRole);
+  const isAdmin         = ["admin"].includes(currentRole);
   const isSupervisor    = ["chef_service_administratif", "csph"].includes(currentRole);
 
   // ── Gradient supervisor selon dark mode ───────────────
@@ -248,12 +322,18 @@ export default function App() {
       id: "inventaire" as MenuId,
       label: "Inventaire",
       icon: <Archive size={17} />,
-      children: categories.map(cat => ({
-        id: `cat_${cat.id}` as MenuId,
-        label: cat.label,
-        icon: getCatIcon(cat.label, 14),
-        categoryId: cat.id,
-      })),
+      children: categories
+        .filter(cat => {
+          // L'agent logistique ne voit pas la catégorie Armement dans le menu
+          if (currentRole === "agent_logistique" && cat.label.toLowerCase().includes("armement")) return false;
+          return true;
+        })
+        .map(cat => ({
+          id: `cat_${cat.id}` as MenuId,
+          label: cat.label,
+          icon: getCatIcon(cat.label, 14),
+          categoryId: cat.id,
+        })),
     },
     {
       id: "movements",

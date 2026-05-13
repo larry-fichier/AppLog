@@ -34,7 +34,7 @@ export interface Equipment {
   details: EquipmentDetails;
 }
 
-export type UserRole = "csph" | "chef_service_administratif" | "agent_logistique" | "chef_bureau_logistique" | "admin" | "viewer";
+export type UserRole = "csph" | "chef_service_administratif" | "agent_logistique" | "admin" | "viewer";
 
 export interface AppUser {
   uid: string;

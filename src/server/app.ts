@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import jwt from 'jsonwebtoken';
 import { authenticateToken, authorize } from './middleware/auth.ts';
 import { EquipmentService } from './services/equipmentService.ts';
 import { AdminService } from './services/adminService.ts';
@@ -156,6 +157,72 @@ export async function createApp() {
     res.json({ success: true });
   });
 
+  // Auth refresh — renouvelle le token si encore valide ou récemment expiré (< 7 jours)
+  app.post("/api/auth/refresh", async (req, res) => {
+    try {
+      const token = req.cookies?.auth_token;
+      if (!token) return res.status(401).json({ error: "Non authentifié" });
+
+      let decoded: any;
+      try {
+        // Tenter de vérifier normalement
+        decoded = jwt.verify(token, config.jwtSecret);
+      } catch (err: any) {
+        if (err.name === "TokenExpiredError") {
+          // Accepter les tokens expirés depuis moins de 7 jours
+          decoded = jwt.decode(token);
+          if (!decoded || !decoded.id) {
+            return res.status(401).json({ error: "Token invalide" });
+          }
+          const expiredAt = decoded.exp * 1000;
+          const sevenDays = 7 * 24 * 60 * 60 * 1000;
+          if (Date.now() - expiredAt > sevenDays) {
+            return res.status(401).json({ error: "Session trop ancienne, reconnectez-vous" });
+          }
+        } else {
+          return res.status(401).json({ error: "Token invalide" });
+        }
+      }
+
+      // Vérifier que l'utilisateur existe toujours en base
+      const result = await query(
+        "SELECT id, role, email, username, display_name FROM users WHERE id = $1 AND deleted_at IS NULL",
+        [decoded.id]
+      );
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: "Utilisateur introuvable" });
+      }
+
+      const user = result.rows[0];
+
+      // Générer un nouveau token
+      const newToken = jwt.sign(
+        { id: user.id, username: user.username, role: user.role },
+        config.jwtSecret,
+        { expiresIn: "24h" }
+      );
+
+      res.cookie("auth_token", newToken, {
+        httpOnly: true,
+        secure: config.nodeEnv === "production",
+        sameSite: "strict",
+        maxAge: 24 * 60 * 60 * 1000,
+      });
+
+      res.json({
+        user: {
+          id:          user.id,
+          username:    user.username,
+          displayName: user.display_name,
+          role:        user.role,
+        }
+      });
+    } catch (e) {
+      console.error("[Refresh] Erreur:", e);
+      res.status(500).json({ error: "Erreur interne" });
+    }
+  });
+
   // Equipment - GET
   app.get("/api/equipment", authenticateToken, async (req, res) => {
     try {
@@ -167,7 +234,7 @@ export async function createApp() {
         ...e,
         id: String(e.id),
         details: details
-          .filter(d => d.equipment_id === e.id)
+          .filter(d => String(d.equipment_id) === String(e.id))
           .reduce((acc, curr) => ({ ...acc, [curr.field_key]: curr.field_value }), {})
       }));
 
@@ -181,8 +248,28 @@ export async function createApp() {
   app.post("/api/equipment", authenticateToken, async (req: any, res) => {
     try {
       // ✅ Validation des entrées
-      const validated = createEquipmentSchema.parse(req.body);
-      const { name, category, category_id, zone, zone_id, station, station_id, status, details } = validated;
+      let validated;
+      try {
+        validated = createEquipmentSchema.parse(req.body);
+      } catch (zodErr: any) {
+        console.error("[API POST /equipment] ZodError:", JSON.stringify(zodErr.errors, null, 2));
+        console.error("[API POST /equipment] Body reçu:", JSON.stringify(req.body, null, 2));
+        return res.status(400).json({ error: "Validation échouée", details: zodErr.errors });
+      }
+
+      const { category, category_id, zone, zone_id, station, station_id, status, details } = validated;
+
+      // Pour armement : name = designation. Pour les autres : serial > inventaire > designation
+      const isArmement = (category || "").toLowerCase().match(/armement|arme|armes/);
+      const name = (validated.name?.trim()) || (
+        isArmement
+          ? String(details?.designation || details?.numero_serie || "").trim()
+          : String(details?.numero_serie || details?.numero_inventaire || details?.numero_chassis || details?.designation || "").trim()
+      ) || "Sans nom";
+
+      if (!name || name === "Sans nom" && !details) {
+        return res.status(400).json({ error: "Nom ou identifiant obligatoire" });
+      }
 
       const existing = await query(
         "SELECT id FROM equipment WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) AND deleted_at IS NULL",
@@ -263,7 +350,15 @@ export async function createApp() {
       // ✅ Validation Zod partielle
       const updateSchema = createEquipmentSchema.partial();
       const validated = updateSchema.parse(req.body);
-      const { name, category_id, status, zone_id, station_id, details } = validated as any;
+      const { category, category_id, status, zone_id, station_id, details } = validated as any;
+
+      // Pour armement : name = designation. Pour les autres : serial > inventaire > designation
+      const isArmement = (category || "").toLowerCase().match(/armement|arme|armes/);
+      const name = (validated.name?.trim()) || (
+        isArmement
+          ? String(details?.designation || details?.numero_serie || "").trim()
+          : String(details?.numero_serie || details?.numero_inventaire || details?.numero_chassis || details?.designation || "").trim()
+      ) || undefined;
 
       let finalCategoryId = category_id;
       if (finalCategoryId && !isUUID(finalCategoryId)) {
@@ -307,7 +402,7 @@ export async function createApp() {
   });
 
   // Equipment - DELETE (soft delete, admin seulement)
-  app.delete("/api/equipment/:id", authenticateToken, authorize(['admin', 'chef_bureau_logistique']), async (req: any, res) => {
+  app.delete("/api/equipment/:id", authenticateToken, authorize(['admin']), async (req: any, res) => {
     try {
       await query(
         "UPDATE equipment SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1",
@@ -499,7 +594,7 @@ export async function createApp() {
   app.get("/api/config", getConfig);
   app.get("/api/admin/config", authenticateToken, getConfig);
 
-  app.post("/api/admin/config", authenticateToken, authorize(['admin', 'chef_bureau_logistique']), async (req, res) => {
+  app.post("/api/admin/config", authenticateToken, authorize(['admin']), async (req, res) => {
     try {
       const result = await AdminService.saveConfig(req.body);
       res.json(result);

@@ -76,7 +76,13 @@ function slugify(value: string): string {
 }
 
 function generateInventoryNumber(categoryLabel: string, details: Record<string, any>): string {
-  const prefix = categoryLabel.toLowerCase().includes("cuisine") ? "CUI" : "OUT";
+  if (categoryLabel.toLowerCase().includes("cuisine")) {
+    // Format : CUI-YYYY-XXXX  (XXXX = 4 derniers chiffres du timestamp pour unicité)
+    const year = new Date().getFullYear();
+    const seq  = String(Date.now()).slice(-4).padStart(4, "0");
+    return `CUI-${year}-${seq}`;
+  }
+  const prefix = "OUT";
   const designation = slugify(details.designation || details.modele || details.marque || "ITEM");
   const modele = slugify(details.modele || "");
   const quantite = details.quantite ? String(details.quantite) : "1";
@@ -136,12 +142,10 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
   if (l.includes("cuisine") || l.includes("ameublement") || l.includes("mobilier") ||
       l.includes("meuble") || l.includes("frigo") || l.includes("réfrigér") || l.includes("refriger")) {
     return [
-      { key: "numero_inventaire",      label: "N° d'Inventaire",                type: "text",     placeholder: "Ex: CUI-2024-001", isSerial: true, required: true, section: "Identification" },
-      { key: "designation",            label: "Désignation",                     type: "text",     placeholder: "Ex: Réfrigérateur double porte...", required: true, fullWidth: true },
+      { key: "numero_inventaire",      label: "N° d'Inventaire",                type: "text",     placeholder: "CUI-2026-0001", isSerial: true, required: true, section: "Identification" },
       { key: "marque",                 label: "Marque",                           type: "text",     placeholder: "Ex: Samsung, Brandt...", section: "Caractéristiques" },
       { key: "modele",                 label: "Modèle / Référence",              type: "text",     placeholder: "Ex: RB38T775CS9" },
       { key: "quantite",               label: "Quantité",                         type: "number",   placeholder: "Ex: 1", required: true },
-      { key: "position",               label: "Position / Emplacement",          type: "select",   placeholder: "", options: ["Magasin", "Cuisine centrale", "Atelier", "Bureau", "Autre"], required: true, section: "Affectation" },
       { key: "date_entree",            label: "Date d'entrée en stock",          type: "date",     placeholder: "", section: "Dates" },
       { key: "date_mise_utilisation",  label: "Date de mise en utilisation",     type: "date",     placeholder: "", required: true },
       { key: "date_sortie",            label: "Date de sortie",                  type: "date",     placeholder: "" },
@@ -153,11 +157,9 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
       l.includes("electro") || l.includes("énergie") || l.includes("energie") || l.includes("ups") || l.includes("onduleur")) {
     return [
       { key: "numero_serie",           label: "Numéro de Série",                type: "text",     placeholder: "Ex: UPS-12345", isSerial: true, required: true, section: "Identification" },
-      { key: "designation",            label: "Désignation",                     type: "text",     placeholder: "Ex: UPS 10kVA, Groupe électrogène 20kVA...", required: true, fullWidth: true },
       { key: "marque",                 label: "Marque",                           type: "text",     placeholder: "Ex: Eaton, Schneider, Caterpillar...", required: true, section: "Caractéristiques" },
       { key: "modele",                 label: "Modèle / Référence",              type: "text",     placeholder: "Ex: EXRT10KTFW" },
       { key: "puissance",              label: "Puissance / Capacité",            type: "text",     placeholder: "Ex: 10 kVA, 20 kVA" },
-      { key: "position",               label: "Emplacement / Local",             type: "text",     placeholder: "Ex: Salle serveurs, Magasin...", section: "Affectation" },
       { key: "date_entree",            label: "Date d'entrée",                   type: "date",     placeholder: "", section: "Dates" },
       { key: "date_mise_service",      label: "Date de mise en service",         type: "date",     placeholder: "" },
       { key: "date_derniere_revision", label: "Dernière révision / maintenance",  type: "date",     placeholder: "" },
@@ -191,6 +193,19 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
       { key: "date_entree",    label: "Date d'entrée",          type: "date",     placeholder: "", section: "Dates" },
       { key: "date_deploiement", label: "Date de déploiement",  type: "date",     placeholder: "" },
       { key: "observation",    label: "Observation",            type: "textarea", placeholder: "Affectation, remarques...", fullWidth: true, section: "Notes" },
+    ];
+  }
+
+  if (l.includes("armement") || l.includes("arme") || l.includes("armes")) {
+    return [
+      { key: "numero_serie",           label: "Numéro de Série / Matricule",   type: "text",     placeholder: "Ex: ARM-2026-0001", isSerial: true, required: true, section: "Identification" },
+      { key: "designation",            label: "Désignation",                    type: "text",     placeholder: "Ex: Pistolet, Fusil d'assaut...", required: true, fullWidth: true },
+      { key: "marque",                 label: "Marque / Fabricant",             type: "text",     placeholder: "Ex: Glock, Beretta...", section: "Caractéristiques" },
+      { key: "modele",                 label: "Modèle / Référence",             type: "text",     placeholder: "Ex: G17, M16A2..." },
+      { key: "calibre",                label: "Calibre",                        type: "text",     placeholder: "Ex: 9mm, 5.56x45mm..." },
+      { key: "date_entree",            label: "Date d'entrée en dotation",      type: "date",     placeholder: "", section: "Dates" },
+      { key: "date_derniere_revision", label: "Dernière révision",              type: "date",     placeholder: "" },
+      { key: "observation",            label: "Observation",                    type: "textarea", placeholder: "État, remarques...", fullWidth: true, section: "Notes" },
     ];
   }
 
@@ -400,7 +415,7 @@ export function EquipmentDialog({
   }
 
   const isReadOnly = activeRole === "csph" || activeRole === "chef_service_administratif";
-  const canDelete  = ["chef_bureau_logistique", "admin", "agent_logistique"].includes(activeRole);
+  const canDelete  = ["admin", "agent_logistique"].includes(activeRole);
 
   const selectedCategory = settings?.categories.find(c => c.id === categoryId);
   // ✅ FIX : categoryLabel (state) est rempli immédiatement à l'ouverture du dialog
@@ -414,8 +429,11 @@ export function EquipmentDialog({
   const useSerialAsName          = !!serialField;
   const selectedStatus           = STATUS_OPTIONS.find(s => s.value === status) || STATUS_OPTIONS[0];
 
-  const isToolCategory = /outillage|outil|outils/.test(categoryLabelForFields.toLowerCase());
-  const isToolCable = isToolCategory && /cable|câble|cordon|fil/i.test(String(details.designation || details.modele || details.observation || ""));
+  const isToolCategory     = /outillage|outil|outils/.test(categoryLabelForFields.toLowerCase());
+  const isToolCable        = isToolCategory && /cable|câble|cordon|fil/i.test(String(details.designation || details.modele || details.observation || ""));
+  const isCuisineCategory  = /cuisine|ameublement|mobilier|meuble|frigo|réfrigér|refriger/.test(categoryLabelForFields.toLowerCase());
+  const isGroupeCategory   = /groupe|générateur|generateur|electro|énergie|energie|ups|onduleur/.test(categoryLabelForFields.toLowerCase());
+  const isArmementCategory = /armement|arme|armes/.test(categoryLabelForFields.toLowerCase());
 
   useEffect(() => {
     if (!open) return;
@@ -435,12 +453,14 @@ export function EquipmentDialog({
 
     if (item) {
       setCategoryId((item as any).category_id  || "");
-      setCategoryLabel((item as any).category_label || ""); // ✅ immédiat, pas besoin d'attendre settings
+      setCategoryLabel((item as any).category_label || "");
+      // En mode édition : name = designation si elle existe dans les details, sinon le name de la table
       setName((item as any).details?.designation || item.name || "");
       setStatus(item.status || "fonctionnel");
       setZoneId((item as any).zone_id    || "");
       setStationId((item as any).station_id || "");
-      setDetails(item.details || {});
+      // S'assurer que details est bien un objet (jamais null/undefined)
+      setDetails(item.details && typeof item.details === "object" ? { ...item.details } : {});
       setStep("info");
     } else {
       setCategoryId(defaultCategoryId || "");
@@ -482,7 +502,14 @@ export function EquipmentDialog({
     if (!token && !isBypass) { toast.error("Veuillez vous connecter."); return; }
 
     const serialValue = serialField ? details[serialField.key]?.toString().trim() : "";
-    const finalName   = useSerialAsName ? (serialValue || name.trim()) : name.trim();
+
+    // Pour armement : le name principal = designation, le serial reste juste dans details
+    // Pour les autres catégories avec serial (outillage, etc.) : le serial EST le name
+    const finalName = isArmementCategory
+      ? (details.designation?.toString().trim() || name.trim() || serialValue)
+      : useSerialAsName
+        ? (serialValue || name.trim())
+        : (name.trim() || details.designation?.toString().trim() || "");
 
     if (!finalName)  { toast.error("L'identifiant principal ou la désignation est obligatoire"); return; }
     if (!categoryId) { toast.error("La catégorie est obligatoire"); return; }
@@ -492,7 +519,8 @@ export function EquipmentDialog({
       const cleanDetails = Object.fromEntries(
         Object.entries({
           ...details,
-          ...(useSerialAsName && name.trim() ? { designation: name.trim() } : {}),
+          // Si useSerialAsName et qu'on a un champ name en plus du serial, le stocker comme designation
+          ...(useSerialAsName && name.trim() && !details.designation ? { designation: name.trim() } : {}),
         }).filter(([, v]) => v !== "" && v !== null && v !== undefined)
       );
 
@@ -502,11 +530,21 @@ export function EquipmentDialog({
         cleanDetails.numero_inventaire = generateInventoryNumber(categoryLabelForFields, cleanDetails);
       }
 
+      // Pour la catégorie Cuisine : position fixe "CUISINE" + N° inventaire toujours auto-généré à la création
+      if (isCuisineCategory) {
+        cleanDetails.position = "CUISINE";
+        if (!item?.id) {
+          // Toujours générer un nouveau numéro à la création
+          cleanDetails.numero_inventaire = generateInventoryNumber(categoryLabelForFields, cleanDetails);
+        }
+      }
+
       const payload = {
         name: finalName,
+        category:    categoryLabelForFields,
         category_id: categoryId,
-        zone_id: zoneId       || undefined,
-        station_id: stationId || undefined,
+        zone_id:     zoneId    || undefined,
+        station_id:  stationId || undefined,
         status,
         details: cleanDetails,
       };
@@ -700,7 +738,8 @@ export function EquipmentDialog({
                     )}
                   </div>
 
-                  {/* Statut */}
+                  {/* Statut — masqué pour la catégorie Cuisine */}
+                  {!isCuisineCategory && (
                   <div className="space-y-2">
                     <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
                       État opérationnel <span className="text-red-400">*</span>
@@ -724,6 +763,7 @@ export function EquipmentDialog({
                       ))}
                     </div>
                   </div>
+                  )}
 
                   {/* Champs dynamiques */}
                   {dynamicFields.length > 0 && (
@@ -805,9 +845,13 @@ export function EquipmentDialog({
                                         field.isSerial
                                           ? "h-11 font-mono text-base border-slate-400 dark:border-slate-500 focus:border-slate-900 bg-slate-50 dark:bg-slate-700 font-bold"
                                           : "h-10"
+                                      } ${
+                                        isCuisineCategory && field.key === "numero_inventaire"
+                                          ? "bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-500 cursor-not-allowed border-slate-200"
+                                          : ""
                                       }`}
-                                      readOnly={isReadOnly}
-                                      autoFocus={field.isSerial && idx === 0}
+                                      readOnly={isReadOnly || (isCuisineCategory && field.key === "numero_inventaire")}
+                                      autoFocus={field.isSerial && idx === 0 && !isCuisineCategory}
                                     />
                                   )}
 
@@ -815,6 +859,11 @@ export function EquipmentDialog({
                                     <p className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
                                       <CheckCircle2 size={10} />
                                       Utilisé comme identifiant principal
+                                    </p>
+                                  )}
+                                  {isCuisineCategory && field.key === "numero_inventaire" && (
+                                    <p className="text-[10px] text-slate-400 italic">
+                                      Généré automatiquement à l'enregistrement
                                     </p>
                                   )}
                                 </div>
@@ -901,27 +950,6 @@ export function EquipmentDialog({
                     </div>
                   )}
 
-                  {/* Désignation libre */}
-                  {!categoryLabelForFields.toLowerCase().match(/rame|véhicule|vehicule|voiture|camion|transport/) && (
-                    <div className="space-y-1.5 pt-4 border-t border-slate-100 dark:border-slate-800">
-                      <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                        {nameFieldLabel}
-                        {!useSerialAsName && <span className="text-red-400 ml-1">*</span>}
-                      </Label>
-                      <Input
-                        placeholder={nameFieldPlaceholder}
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        className="h-10 border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500 focus:border-slate-900 dark:focus:border-slate-500 text-sm"
-                        readOnly={isReadOnly}
-                      />
-                      {useSerialAsName && (
-                        <p className="text-[10px] text-slate-400">
-                          Optionnel — complète le numéro de série pour la lisibilité
-                        </p>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </div>

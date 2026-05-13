@@ -47,8 +47,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     zones: [],
     stations: [],
     roles: [
-      { id: "admin",                      label: "Super Administrateur" },
-      { id: "chef_bureau_logistique",     label: "Chef Bureau Logistique" },
+      { id: "admin",                      label: "Administrateur" },
       { id: "chef_service_administratif", label: "Chef Service Administratif" },
       { id: "agent_logistique",           label: "Agent Logistique" },
       { id: "csph",                       label: "CSPH" },
@@ -759,4 +758,3 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     </div>
   );
 }
-

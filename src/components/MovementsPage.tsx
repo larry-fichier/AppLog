@@ -40,7 +40,7 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
   const [selectedEquip, setSelectedEquip] = useState<any | null>(null);
   const [equipment, setEquipment] = useState<any[]>([]);
 
-  const canEdit = ["agent_logistique", "chef_bureau_logistique", "admin"].includes(activeRole || "");
+  const canEdit = ["agent_logistique", "admin"].includes(activeRole || "");
 
   async function fetchMovements() {
     setLoading(true);

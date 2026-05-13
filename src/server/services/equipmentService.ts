@@ -35,20 +35,24 @@ export class EquipmentService {
    */
   static async createEquipment(data: {
     name: string;
-    category_id: string;
+    category_id: string | null | undefined;
     status: string;
-    zone_id: string;
-    station_id: string;
+    zone_id: string | null | undefined;
+    station_id: string | null | undefined;
     created_by: string;
     details?: Record<string, any>;
   }) {
     const { name, category_id, status, zone_id, station_id, created_by, details } = data;
+
+    if (!category_id) {
+      throw new Error("Catégorie invalide ou introuvable — vérifiez que la catégorie existe en base");
+    }
     
     const equipRes = await query(`
       INSERT INTO equipment (name, category_id, status, zone_id, station_id, service_id, bureau_id, created_by)
       VALUES ($1, $2, $3, $4, $5, $4, $5, $6)
       RETURNING id
-    `, [name, category_id, status, zone_id, station_id, created_by]);
+    `, [name, category_id, status, zone_id || null, station_id || null, created_by]);
     
     const equipmentId = equipRes.rows[0].id;
 
