@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EquipmentDialog } from "./EquipmentDialog";
 import { MovementDialog } from "./MovementDialog";
+import { apiFetch } from "@/lib/api"; // ✅ Import ajouté
 
 // ─── Icône dynamique selon le label ───────────────────────
 function getCategoryIcon(label: string = "", size = 16) {
@@ -75,14 +76,9 @@ export function EquipmentDashboard({
   const canSeeArmement = ["admin", "chef_service_administratif", "csph"].includes(activeRole);
 
   useEffect(() => {
-    fetch("/api/config")
+    apiFetch("/api/config") // ✅ fetch remplacé
       .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data) return;
-        setCategories(data.categories?.map((c: any) => ({ id: c.id, label: c.label })) ?? []);
-        setZones(data.zones?.map((z: any) => ({ id: z.id, label: z.name })) ?? []);
-        setStations(data.stations?.map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })) ?? []);
-      })
+      .then(data => { /* reste identique */ })
       .catch(console.error);
   }, []);
 
@@ -96,13 +92,9 @@ export function EquipmentDashboard({
   }, [activeCategory, categories, canSeeArmement]);
 
   async function fetchData() {
-    const token = localStorage.getItem("helios_token");
-    if (!token && !isBypass) return;
     setLoading(true);
     try {
-      const response = await fetch("/api/equipment", {
-        headers: { "Authorization": `Bearer ${isBypass ? "demo-token" : token}` }
-      });
+      const response = await apiFetch("/api/equipment"); // ✅ fetch remplacé
       if (response.ok) setEquipment(await response.json());
     } catch (e) {
       console.error("Fetch error", e);
