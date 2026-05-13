@@ -185,90 +185,64 @@ export function EquipmentDashboard({
     const label = item.category_label || activeCategoryObj?.label || "";
     const l = label.toLowerCase();
 
+    // ── L1 : Numéro identifiant principal ──────────────────
+    const numRef =
+      d.immatriculation     ? `🚗 ${d.immatriculation}`
+      : d.numero_serie      ? `N° ${d.numero_serie}`
+      : d.numero_inventaire ? `Inv. ${d.numero_inventaire}`
+      : d.numero_chassis    ? `Châssis ${d.numero_chassis}`
+      : null;
+
+    // ── L2 : Désignation ou Marque · Modèle ────────────────
+    const designLabel =
+      d.designation
+        ? d.designation
+        : d.marque
+          ? `${d.marque}${d.modele ? " · " + d.modele : ""}`
+          : null;
+
+    // ── L3 : Info spécifique à la catégorie ────────────────
+    let specificInfo: string | null = null;
     if (isVehicleCategory(label)) {
-      return (
-        <TableCell className="px-6 py-4">
-          <div className="space-y-1">
-            <span className="text-xs font-black bg-zinc-100 dark:bg-zinc-700 dark:text-zinc-200 px-2 py-0.5 rounded font-mono">
-              {d.immatriculation || d.license_plate || "NON-IMMAT."}
-            </span>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold">
-              {d.marque || d.brand || "—"} {d.modele || d.model || ""}
-            </div>
-            {d.kilometrage && (
-              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">{Number(d.kilometrage).toLocaleString()} km</div>
-            )}
-          </div>
-        </TableCell>
+      specificInfo = d.kilometrage ? `${Number(d.kilometrage).toLocaleString()} km` : null;
+    } else if (l.includes("armement")) {
+      specificInfo = d.calibre ? `Calibre : ${d.calibre}` : null;
+    } else if (l.includes("groupe") || l.includes("générateur") || l.includes("generateur") || l.includes("electro")) {
+      specificInfo = d.puissance ? `⚡ ${d.puissance}` : null;
+    } else if (l.includes("cuisine") || l.includes("frigo") || l.includes("réfrigér")) {
+      specificInfo = d.date_mise_utilisation
+        ? `Service : ${new Date(d.date_mise_utilisation).toLocaleDateString("fr-FR")}`
+        : d.date_entree ? `Entrée : ${new Date(d.date_entree).toLocaleDateString("fr-FR")}` : null;
+    } else if (l.includes("clim") || l.includes("climatiseur")) {
+      specificInfo = d.position ? `📍 ${d.position}` : null;
+    } else if (l.includes("informatique") || l.includes("it") || l.includes("ordinateur") || l.includes("electronique")) {
+      specificInfo = d.date_mise_utilisation
+        ? `Service : ${new Date(d.date_mise_utilisation).toLocaleDateString("fr-FR")}` : null;
+    } else {
+      const extra = Object.entries(d).find(([k, v]) =>
+        v && !["designation","marque","modele","numero_serie","numero_inventaire",
+                "immatriculation","numero_chassis","observation","dernieres_interventions",
+                "date_entree","date_sortie","date_mise_utilisation"].includes(k)
       );
+      specificInfo = extra ? `${extra[0].replace(/_/g, " ")} : ${String(extra[1]).substring(0, 30)}` : null;
     }
-
-    if (l.includes("clim") || l.includes("climatiseur")) {
-      return (
-        <TableCell className="px-6 py-4">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{d.marque || d.brand || "—"} {d.modele || d.model || ""}</span>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">N°: {d.numero_serie || d.serial_number || "—"}</div>
-            {d.position && <div className="text-[10px] text-accent">Position: {d.position}</div>}
-          </div>
-        </TableCell>
-      );
-    }
-
-    if (l.includes("groupe") || l.includes("générateur") || l.includes("generateur")) {
-      return (
-        <TableCell className="px-6 py-4">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{d.marque || d.brand || "—"}</span>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">⚡ {d.puissance_kva || d.power || "—"} kVA</div>
-            {d.heures_compteur && <div className="text-[10px] text-zinc-400 dark:text-zinc-500">{d.heures_compteur} h</div>}
-          </div>
-        </TableCell>
-      );
-    }
-
-    if (l.includes("informatique") || l.includes("it") || l.includes("electronique") || l.includes("ordinateur")) {
-      return (
-        <TableCell className="px-6 py-4">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{d.marque || d.brand || "—"} {d.modele || d.model || ""}</span>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">N°: {d.numero_serie || d.serial_number || "—"}</div>
-          </div>
-        </TableCell>
-      );
-    }
-
-    if (l.includes("armement")) {
-      return (
-        <TableCell className="px-6 py-4">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{d.type_arme || "—"}</span>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">N°: {d.numero_serie || "—"}</div>
-            {d.nb_chargeurs && (
-              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">🔋 {d.nb_chargeurs} chargeur(s)</div>
-            )}
-            {d.position && (
-              <div className="text-[10px] text-accent font-bold">{d.position}</div>
-            )}
-          </div>
-        </TableCell>
-      );
-    }
-
-    const entries = Object.entries(d)
-      .filter(([k, v]) => v && k !== "dernieres_interventions" && k !== "observation")
-      .slice(0, 2);
 
     return (
       <TableCell className="px-6 py-4">
         <div className="space-y-1">
-          {entries.map(([k, v]) => (
-            <div key={k} className="text-[11px]">
-              <span className="text-zinc-400 dark:text-zinc-500 font-bold uppercase text-[9px]">{k.replace(/_/g, ' ')}: </span>
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">{String(v).substring(0, 40)}</span>
-            </div>
-          ))}
-          {entries.length === 0 && <span className="text-zinc-300 dark:text-zinc-600 italic text-xs">—</span>}
+          {/* L1 — Numéro identifiant */}
+          {numRef
+            ? <p className="text-[10px] font-mono font-black text-slate-600 dark:text-slate-300 tracking-wider bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded w-fit">{numRef}</p>
+            : <p className="text-[10px] font-mono text-zinc-300 dark:text-zinc-600 italic">— sans référence —</p>
+          }
+          {/* L2 — Désignation / Marque · Modèle */}
+          {designLabel && (
+            <p className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">{designLabel}</p>
+          )}
+          {/* L3 — Info spécifique */}
+          {specificInfo && (
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">{specificInfo}</p>
+          )}
         </div>
       </TableCell>
     );
