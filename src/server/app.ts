@@ -133,7 +133,7 @@ export async function createApp() {
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000 // 24 heures
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 jours — le cookie survit à l'expiration du JWT (24h)
       });
 
       // Retourner les infos utilisateur (pas le token)
@@ -206,7 +206,7 @@ export async function createApp() {
         httpOnly: true,
         secure: config.nodeEnv === "production",
         sameSite: "strict",
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
       });
 
       res.json({

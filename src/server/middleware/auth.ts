@@ -35,14 +35,17 @@ export const authenticateToken = async (req: any, res: any, next: any) => {
       
       req.user = result.rows[0];
       next();
-    } catch (err) {
-      // ✅ Logger les tentatives d'accès invalides
+    } catch (err: any) {
       logger.security('AUTH_FAILED', 'low', {
         ip: req.ip,
         path: req.path,
         error: err instanceof Error ? err.message : 'Unknown error'
       });
-      return res.status(403).json({ error: "Session expirée" });
+      // 401 = token expiré (refresh possible), 403 = token corrompu/invalide
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: "Session expirée" });
+      }
+      return res.status(403).json({ error: "Token invalide" });
     }
   } catch (globalErr) {
     console.error("[Auth] Middleware Error:", globalErr);

@@ -35,7 +35,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
 
   const response = await originalFetch(input, init);
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     // Si un refresh est déjà en cours, attendre sa résolution
     if (isRefreshing) {
       return new Promise((resolve) => {
@@ -202,11 +202,30 @@ export default function App() {
           const check = await fetch("/api/health", { credentials: "include" });
           if (check.ok) {
             setUser(JSON.parse(storedUser));
+          } else if (check.status === 401) {
+            // Token expiré → tenter refresh silencieux avant de déconnecter
+            try {
+              const refreshRes = await originalFetch("/api/auth/refresh", {
+                method: "POST",
+                credentials: "include",
+              });
+              if (refreshRes.ok) {
+                const data = await refreshRes.json();
+                const updatedUser = data.user || JSON.parse(storedUser);
+                localStorage.setItem("helios_user", JSON.stringify(updatedUser));
+                setUser(updatedUser);
+              } else {
+                localStorage.removeItem("helios_user");
+              }
+            } catch {
+              localStorage.removeItem("helios_user");
+            }
           } else {
             localStorage.removeItem("helios_user");
           }
         } catch {
-          localStorage.removeItem("helios_user");
+          // Erreur réseau — garder l'utilisateur connecté localement
+          setUser(JSON.parse(storedUser));
         }
       }
 
