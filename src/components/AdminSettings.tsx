@@ -12,18 +12,10 @@ import {
   ShieldCheck, Key, UserPlus, AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 
 interface AdminSettingsProps {
   isBypass?: boolean;
-}
-
-// ─── Helper : headers auth ─────────────────────────────────
-function authHeaders(isBypass: boolean): Record<string, string> {
-  const token = isBypass ? "demo-token" : localStorage.getItem("helios_token") || "";
-  return {
-    "Authorization": `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
 }
 
 export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
@@ -69,7 +61,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   async function checkHealth() {
     try {
-      const res = await fetch("/api/health");
+      const res = await apiFetch("/api/health");
       if (res.ok) {
         const data = await res.json();
         setDbMode(data.mode || "Inconnu");
@@ -79,7 +71,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   async function fetchConfig() {
     try {
-      const res = await fetch("/api/config");
+      const res = await apiFetch("/api/config");
       if (res.ok) {
         const data = await res.json();
         setSettings(prev => ({
@@ -95,7 +87,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   async function fetchUsers() {
     try {
-      const res = await fetch("/api/admin/users", { headers: authHeaders(isBypass) });
+      const res = await apiFetch("/api/admin/users");
       if (res.ok) {
         const data = await res.json();
         setUsers(data.map((u: any) => ({
@@ -119,9 +111,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   async function handleSaveSettings() {
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/config", {
+      const res = await apiFetch("/api/admin/config", {
         method: "POST",
-        headers: authHeaders(isBypass),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
       });
       if (res.ok) {
@@ -147,9 +139,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     }
     setIsCreatingUser(true);
     try {
-      const res = await fetch("/api/admin/users", {
+      const res = await apiFetch("/api/admin/users", {
         method: "POST",
-        headers: authHeaders(isBypass),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username:    newUser.username.trim(),
           password:    newUser.password,
@@ -174,9 +166,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   // ── Changer le rôle ──────────────────────────────────────
   async function handleUpdateUserRole(uid: string, newRole: UserRole) {
     try {
-      const res = await fetch(`/api/admin/users/${uid}/role`, {
+      const res = await apiFetch(`/api/admin/users/${uid}/role`, {
         method: "PUT",
-        headers: authHeaders(isBypass),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: newRole }),
       });
       if (res.ok) {
@@ -195,9 +187,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   async function handleDeleteUser(uid: string) {
     if (!confirm("Supprimer définitivement cet utilisateur ?")) return;
     try {
-      const res = await fetch(`/api/admin/users/${uid}`, {
+      const res = await apiFetch(`/api/admin/users/${uid}`, {
         method: "DELETE",
-        headers: authHeaders(isBypass),
+        headers: { "Content-Type": "application/json" },
       });
       if (res.ok) {
         toast.success("Utilisateur supprimé");
@@ -226,9 +218,9 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     }
     setResetting(true);
     try {
-      const res = await fetch(`/api/admin/users/${resetUser.uid}/password`, {
+      const res = await apiFetch(`/api/admin/users/${resetUser.uid}/password`, {
         method: "PUT",
-        headers: authHeaders(isBypass),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ newPassword }),
       });
       if (res.ok) {
@@ -758,3 +750,4 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     </div>
   );
 }
+

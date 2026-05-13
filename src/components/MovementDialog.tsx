@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2, Save } from "lucide-react";
 import {
@@ -152,12 +153,9 @@ export function MovementDialog({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/movements', {
+      const res = await apiFetch('/api/movements', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('helios_token')}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           equipment_id:       equipmentId,
           type,

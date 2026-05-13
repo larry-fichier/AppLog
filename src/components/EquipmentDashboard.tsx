@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EquipmentDialog } from "./EquipmentDialog";
 import { MovementDialog } from "./MovementDialog";
-import { apiFetch } from "@/lib/api"; // ✅ Import ajouté
+import { apiFetch } from "@/lib/api";
 
 // ─── Icône dynamique selon le label ───────────────────────
 function getCategoryIcon(label: string = "", size = 16) {
@@ -76,9 +76,14 @@ export function EquipmentDashboard({
   const canSeeArmement = ["admin", "chef_service_administratif", "csph"].includes(activeRole);
 
   useEffect(() => {
-    apiFetch("/api/config") // ✅ fetch remplacé
+    apiFetch("/api/config")
       .then(r => r.ok ? r.json() : null)
-      .then(data => { /* reste identique */ })
+      .then(data => {
+        if (!data) return;
+        setCategories(data.categories?.map((c: any) => ({ id: c.id, label: c.label })) ?? []);
+        setZones(data.zones?.map((z: any) => ({ id: z.id, label: z.name })) ?? []);
+        setStations(data.stations?.map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })) ?? []);
+      })
       .catch(console.error);
   }, []);
 
@@ -94,7 +99,7 @@ export function EquipmentDashboard({
   async function fetchData() {
     setLoading(true);
     try {
-      const response = await apiFetch("/api/equipment"); // ✅ fetch remplacé
+      const response = await apiFetch("/api/equipment");
       if (response.ok) setEquipment(await response.json());
     } catch (e) {
       console.error("Fetch error", e);

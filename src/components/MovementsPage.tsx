@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api";
 import { useState, useEffect } from "react";
 import { ArrowLeftRight, Search, Filter, Loader2 } from "lucide-react";
 import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Truck } from "lucide-react";
@@ -45,9 +46,7 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
   async function fetchMovements() {
     setLoading(true);
     try {
-      const res = await fetch('/api/movements', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('helios_token')}` },
-      });
+      const res = await apiFetch('/api/movements');
       if (res.ok) setRows(await res.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -55,9 +54,7 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
 
   async function fetchEquipment() {
     try {
-      const res = await fetch('/api/equipment', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('helios_token')}` },
-      });
+      const res = await apiFetch('/api/equipment');
       if (res.ok) setEquipment(await res.json());
     } catch (e) { console.error(e); }
   }

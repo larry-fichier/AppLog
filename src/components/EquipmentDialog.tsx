@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import React from "react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api";
 import {
   Loader2, Trash2, Save, ChevronLeft,
   Tag, ClipboardList, CheckCircle2, Circle,
@@ -251,7 +252,7 @@ export function EquipmentDialog({
   React.useEffect(() => {
     if (!showHistory || !item?.id) return;
     setHistoryLoading(true);
-    fetch(`/api/equipment/${item.id}/history`, { credentials: "include" })
+    apiFetch(`/api/equipment/${item.id}/history`)
       .then(r => r.ok ? r.json() : [])
       .then(setHistory).catch(() => {})
       .finally(() => setHistoryLoading(false));
@@ -438,7 +439,7 @@ export function EquipmentDialog({
   useEffect(() => {
     if (!open) return;
 
-    fetch("/api/config")
+    apiFetch("/api/config")
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
@@ -549,14 +550,11 @@ export function EquipmentDialog({
         details: cleanDetails,
       };
 
-      const res = await fetch(
+      const res = await apiFetch(
         item?.id ? `/api/equipment/${item.id}` : "/api/equipment",
         {
           method: item?.id ? "PUT" : "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${isBypass ? "demo-token" : token}`,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         }
       );
@@ -580,9 +578,8 @@ export function EquipmentDialog({
     if (!item?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/equipment/${item.id}`, {
+      const res = await apiFetch(`/api/equipment/${item.id}`, {
         method: "DELETE",
-        headers: { "Authorization": `Bearer ${isBypass ? "demo-token" : token}` },
       });
       if (res.ok) { toast.success("Équipement supprimé"); onOpenChange(false); }
       else { const e = await res.json(); throw new Error(e.error); }
