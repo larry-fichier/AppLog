@@ -499,8 +499,6 @@ export function EquipmentDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem("helios_token");
-    if (!token && !isBypass) { toast.error("Veuillez vous connecter."); return; }
 
     const serialValue = serialField ? details[serialField.key]?.toString().trim() : "";
 
@@ -574,7 +572,6 @@ export function EquipmentDialog({
   };
 
   const handleDelete = async () => {
-    const token = localStorage.getItem("helios_token");
     if (!item?.id) return;
     setLoading(true);
     try {

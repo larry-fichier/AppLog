@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api";
 import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -153,7 +154,7 @@ export function RameImporter() {
 
   async function loadCategories() {
     try {
-      const res = await fetch("/api/config");
+      const res = await apiFetch("/api/config");
       if (res.ok) {
         const data = await res.json();
         const cats = (data.categories || []).map((c: any) => ({ id: c.id, label: c.label }));
@@ -239,8 +240,6 @@ export function RameImporter() {
   }
 
   async function handleImport() {
-    const token = localStorage.getItem("helios_token");
-    if (!token) { toast.error("Session expirée. Reconnectez-vous."); return; }
     if (!categoryId) { toast.error("Sélectionnez une catégorie."); return; }
     if (selectedVehicles.length === 0) { toast.error("Sélectionnez au moins un véhicule."); return; }
 
@@ -270,12 +269,9 @@ export function RameImporter() {
           },
         };
 
-        const res = await fetch("/api/equipment", {
+        const res = await apiFetch("/api/equipment", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api";
 import {
   ArrowDown, ArrowUp, ArrowLeftRight,
   RotateCcw, SlidersHorizontal, Truck,
@@ -52,9 +53,7 @@ export function MovementHistory({ equipmentId }: { equipmentId: string }) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/movements?equipment_id=${equipmentId}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('helios_token')}` },
-    })
+    apiFetch(`/api/movements?equipment_id=${equipmentId}`)
       .then(r => r.ok ? r.json() : Promise.reject('Erreur serveur'))
       .then(data => { setRows(Array.isArray(data) ? data : []); })
       .catch(e => setError(String(e)))

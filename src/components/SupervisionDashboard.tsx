@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { apiFetch } from "@/lib/api";
 import {
   Activity, AlertTriangle, Box, CheckCircle2, ChevronRight,
   Clock, Download, MapPin, RefreshCw, Shield, TrendingUp,
@@ -355,18 +356,18 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   const [journalSearch, setJournalSearch] = useState("");
 
   const fetchAll = useCallback(async () => {
-  try {
-    const [eqRes, mvRes] = await Promise.all([
-      fetch("/api/equipment", { credentials: "include" }),
-      fetch("/api/movements", { credentials: "include" }),
-    ]);
-    if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
-    if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
-    else setMovements([]);
-    setLastRefresh(new Date());
-  } catch (e) { console.error(e); }
-  finally { setLoading(false); }
-}, [isBypass]);
+    try {
+      const [eqRes, mvRes] = await Promise.all([
+        apiFetch("/api/equipment"),
+        apiFetch("/api/movements"),
+      ]);
+      if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
+      if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
+      else setMovements([]);
+      setLastRefresh(new Date());
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, []);
 
   useEffect(() => { fetchAll(); const t = setInterval(fetchAll, 60000); return () => clearInterval(t); }, [fetchAll]);
 
