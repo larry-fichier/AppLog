@@ -26,14 +26,19 @@ function isUUID(str: string): boolean {
 export async function createApp() {
   const app = express();
 
-  // ✅ HTTPS Enforcement (production)
+  // ✅ Trust proxy Nginx
+  app.set('trust proxy', 1);
+
+  // ✅ HTTPS Enforcement — uniquement si un vrai proxy SSL transmet x-forwarded-proto
   if (config.nodeEnv === 'production') {
     app.use((req, res, next) => {
-      if (req.header('x-forwarded-proto') !== 'https') {
-        res.redirect(`https://${req.header('host')}${req.url}`);
-      } else {
-        next();
+      const proto = req.header('x-forwarded-proto');
+      // Ne rediriger que si le header est explicitement 'http' (proxy SSL actif)
+      // et jamais pour les appels API (évite les boucles)
+      if (proto === 'http' && !req.path.startsWith('/api/')) {
+        return res.redirect(301, `https://${req.header('host')}${req.url}`);
       }
+      next();
     });
   }
 
@@ -59,15 +64,22 @@ export async function createApp() {
     app.use(helmet({ contentSecurityPolicy: false }));
   }
 
-  // ✅ CORS restrictif
+  // ✅ CORS — accepte l'IP du serveur en HTTP et HTTPS
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',');
   app.use(cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Accepter les requêtes sans origin (mobile, curl, même domaine)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // En production sur réseau local, accepter toutes les origines du même serveur
+      if (config.nodeEnv === 'production') return callback(null, true);
+      callback(new Error('CORS non autorisé'));
+    },
     credentials: true,
     optionsSuccessStatus: 200
   }));
 
-  // ✅ Disable CSP in dev so Vite HMR and inline scripts work correctly
+  // ✅ Disable CSP en dev
   if (config.nodeEnv !== 'production') {
     app.use((req, res, next) => {
       res.removeHeader('Content-Security-Policy');
@@ -80,69 +92,60 @@ export async function createApp() {
   // ✅ Cookie parser
   app.use(cookieParser());
 
-  // ✅ Body parser avec limite de taille
+  // ✅ Body parser
   app.use(express.json({ limit: '1mb' }));
 
-  // ✅ Rate limiting pour login
+  // ✅ Rate limiting login
   const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 tentatives max
+    windowMs: 15 * 60 * 1000,
+    max: config.nodeEnv === 'production' ? 5 : 20,
     message: 'Trop de tentatives de connexion, réessayez dans 15 minutes',
     standardHeaders: true,
     legacyHeaders: false,
-    max: config.nodeEnv === 'production' ? 5 : 20
   });
 
-  // ✅ Rate limiting général (optionnel)
+  // ✅ Rate limiting général
   const generalLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 100, // 100 requêtes par minute
+    windowMs: 60 * 1000,
+    max: 200,
     standardHeaders: true,
     legacyHeaders: false,
   });
 
-  // Appliquer le rate limiter général
   if (config.nodeEnv === 'production') {
     app.use(generalLimiter);
   }
 
+  // ─── Helper cookie ────────────────────────────────────────
+  function cookieOptions() {
+    return {
+      httpOnly: true,
+      secure: false,        // false car HTTP derrière Nginx sans SSL
+      sameSite: 'lax' as const,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
+    };
+  }
 
   // Health check
-  app.get("/api/health", async (req, res) => {
+  app.get("/api/health", (req, res) => {
     res.json({ status: "ok", mode: config.nodeEnv });
   });
 
-  // Auth — accepte { email, password } ou { username, password }
+  // Auth login
   app.post("/api/auth/login", loginLimiter, async (req, res) => {
     try {
-      // ✅ Validation des entrées
       const validated = loginSchema.parse(req.body);
       const identifier = validated.username || validated.email;
-      
       const result = await AuthService.login(identifier, validated.password);
-      
-      // ✅ Logger l'authentification
+
       logger.audit('LOGIN_SUCCESS', result.user.id, {
-        email: validated.email,
         username: validated.username,
         ip: req.ip
       });
 
-      // ✅ Stocker le token dans un cookie httpOnly
-      res.cookie('auth_token', result.token, {
-        httpOnly: true,
-        secure: config.nodeEnv === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 jours — le cookie survit à l'expiration du JWT (24h)
-      });
-
-      // Retourner les infos utilisateur (pas le token)
-      res.json({
-        user: result.user,
-        message: "Connecté avec succès"
-      });
+      res.cookie('auth_token', result.token, cookieOptions());
+      res.json({ user: result.user, message: "Connecté avec succès" });
     } catch (e: any) {
-      // ✅ Message d'erreur générique
       logger.security('LOGIN_FAILED', 'medium', {
         ip: req.ip,
         identifier: req.body.email || req.body.username
@@ -153,11 +156,15 @@ export async function createApp() {
 
   // Auth logout
   app.post("/api/auth/logout", (req, res) => {
-    res.clearCookie("auth_token", { httpOnly: true, sameSite: "strict", secure: config.nodeEnv === "production" });
+    res.clearCookie("auth_token", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
     res.json({ success: true });
   });
 
-  // Auth refresh — renouvelle le token si encore valide ou récemment expiré (< 7 jours)
+  // Auth refresh
   app.post("/api/auth/refresh", async (req, res) => {
     try {
       const token = req.cookies?.auth_token;
@@ -165,18 +172,15 @@ export async function createApp() {
 
       let decoded: any;
       try {
-        // Tenter de vérifier normalement
         decoded = jwt.verify(token, config.jwtSecret);
       } catch (err: any) {
         if (err.name === "TokenExpiredError") {
-          // Accepter les tokens expirés depuis moins de 7 jours
           decoded = jwt.decode(token);
           if (!decoded || !decoded.id) {
             return res.status(401).json({ error: "Token invalide" });
           }
           const expiredAt = decoded.exp * 1000;
-          const sevenDays = 7 * 24 * 60 * 60 * 1000;
-          if (Date.now() - expiredAt > sevenDays) {
+          if (Date.now() - expiredAt > 7 * 24 * 60 * 60 * 1000) {
             return res.status(401).json({ error: "Session trop ancienne, reconnectez-vous" });
           }
         } else {
@@ -184,7 +188,6 @@ export async function createApp() {
         }
       }
 
-      // Vérifier que l'utilisateur existe toujours en base
       const result = await query(
         "SELECT id, role, email, username, display_name FROM users WHERE id = $1 AND deleted_at IS NULL",
         [decoded.id]
@@ -194,21 +197,13 @@ export async function createApp() {
       }
 
       const user = result.rows[0];
-
-      // Générer un nouveau token
       const newToken = jwt.sign(
         { id: user.id, username: user.username, role: user.role },
         config.jwtSecret,
         { expiresIn: "24h" }
       );
 
-      res.cookie("auth_token", newToken, {
-        httpOnly: true,
-        secure: config.nodeEnv === "production",
-        sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
-      });
-
+      res.cookie("auth_token", newToken, cookieOptions());
       res.json({
         user: {
           id:          user.id,
@@ -244,22 +239,19 @@ export async function createApp() {
     }
   });
 
-  // Equipment - POST (avec résolution UUID + vérification doublons)
+  // Equipment - POST
   app.post("/api/equipment", authenticateToken, async (req: any, res) => {
     try {
-      // ✅ Validation des entrées
       let validated;
       try {
         validated = createEquipmentSchema.parse(req.body);
       } catch (zodErr: any) {
         console.error("[API POST /equipment] ZodError:", JSON.stringify(zodErr.errors, null, 2));
-        console.error("[API POST /equipment] Body reçu:", JSON.stringify(req.body, null, 2));
         return res.status(400).json({ error: "Validation échouée", details: zodErr.errors });
       }
 
       const { category, category_id, zone, zone_id, station, station_id, status, details } = validated;
 
-      // Pour armement : name = designation. Pour les autres : serial > inventaire > designation
       const isArmement = (category || "").toLowerCase().match(/armement|arme|armes/);
       const name = (validated.name?.trim()) || (
         isArmement
@@ -267,7 +259,7 @@ export async function createApp() {
           : String(details?.numero_serie || details?.numero_inventaire || details?.numero_chassis || details?.designation || "").trim()
       ) || "Sans nom";
 
-      if (!name || name === "Sans nom" && !details) {
+      if (!name || (name === "Sans nom" && !details)) {
         return res.status(400).json({ error: "Nom ou identifiant obligatoire" });
       }
 
@@ -284,28 +276,20 @@ export async function createApp() {
 
       let finalCategoryId = category_id || category;
       if (finalCategoryId && !isUUID(finalCategoryId)) {
-        const r = await query(
-          "SELECT id FROM categories WHERE code = $1 OR label ILIKE $2 LIMIT 1",
-          [finalCategoryId, `%${finalCategoryId}%`]
-        );
+        const r = await query("SELECT id FROM categories WHERE code = $1 OR label ILIKE $2 LIMIT 1",
+          [finalCategoryId, `%${finalCategoryId}%`]);
         finalCategoryId = r.rows[0]?.id || null;
       }
 
       let finalZoneId = zone_id || zone;
       if (finalZoneId && !isUUID(finalZoneId)) {
-        const r = await query(
-          "SELECT id FROM zones WHERE name ILIKE $1 LIMIT 1",
-          [finalZoneId]
-        );
+        const r = await query("SELECT id FROM zones WHERE name ILIKE $1 LIMIT 1", [finalZoneId]);
         finalZoneId = r.rows[0]?.id || null;
       }
 
       let finalStationId = station_id || station || null;
       if (finalStationId && !isUUID(finalStationId)) {
-        const r = await query(
-          "SELECT id FROM stations WHERE name ILIKE $1 LIMIT 1",
-          [finalStationId]
-        );
+        const r = await query("SELECT id FROM stations WHERE name ILIKE $1 LIMIT 1", [finalStationId]);
         finalStationId = r.rows[0]?.id || null;
       }
 
@@ -319,40 +303,26 @@ export async function createApp() {
         details
       });
 
-      // ✅ Logger l'action sensible
-      logger.audit('EQUIPMENT_CREATED', req.user.id, {
-        equipmentId: id,
-        equipmentName: name,
-        category: category,
-        ip: req.ip
-      });
+      logger.audit('EQUIPMENT_CREATED', req.user.id, { equipmentId: id, equipmentName: name, ip: req.ip });
       (req.app as any).broadcastEvent?.({ type: 'equipment_created', payload: { id: String(id), name } });
-
       res.status(201).json({ id: String(id) });
     } catch (e: any) {
-      // ✅ Validation error handling
       if (e.name === 'ZodError') {
-        return res.status(400).json({
-          error: "Validation échouée",
-          details: e.errors
-        });
+        return res.status(400).json({ error: "Validation échouée", details: e.errors });
       }
       console.error("[API] Equipment POST error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Equipment - PUT (avec validation)
+  // Equipment - PUT
   app.put("/api/equipment/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
-
-      // ✅ Validation Zod partielle
       const updateSchema = createEquipmentSchema.partial();
       const validated = updateSchema.parse(req.body);
       const { category, category_id, status, zone_id, station_id, details } = validated as any;
 
-      // Pour armement : name = designation. Pour les autres : serial > inventaire > designation
       const isArmement = (category || "").toLowerCase().match(/armement|arme|armes/);
       const name = (validated.name?.trim()) || (
         isArmement
@@ -382,10 +352,10 @@ export async function createApp() {
         await query("DELETE FROM equipment_details WHERE equipment_id = $1", [id]);
         for (const [key, val] of Object.entries(details)) {
           if (val !== null && val !== undefined && val !== "") {
-            await query(`
-              INSERT INTO equipment_details (equipment_id, field_key, field_value)
-              VALUES ($1, $2, $3)
-            `, [id, key, String(val)]);
+            await query(
+              "INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, $2, $3)",
+              [id, key, String(val)]
+            );
           }
         }
       }
@@ -401,13 +371,10 @@ export async function createApp() {
     }
   });
 
-  // Equipment - DELETE (soft delete, admin seulement)
+  // Equipment - DELETE
   app.delete("/api/equipment/:id", authenticateToken, authorize(['admin']), async (req: any, res) => {
     try {
-      await query(
-        "UPDATE equipment SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1",
-        [req.params.id]
-      );
+      await query("UPDATE equipment SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", [req.params.id]);
       logger.audit('EQUIPMENT_DELETED', req.user.id, { equipmentId: req.params.id, ip: req.ip });
       res.json({ success: true });
     } catch (e: any) {
@@ -452,15 +419,12 @@ export async function createApp() {
       equipment_id, type, note, reference,
       from_zone_id, from_station_id,
       to_zone_id, to_station_id,
-      new_status,
-      date_deploiement, date_retour_prevue,
+      new_status, date_deploiement, date_retour_prevue,
     } = req.body;
 
     const ALLOWED = ['entree', 'sortie', 'transfert', 'retour', 'ajustement', 'deploiement'];
-    if (!ALLOWED.includes(type))
-      return res.status(400).json({ error: `Type invalide: ${type}` });
-    if (!equipment_id)
-      return res.status(400).json({ error: 'equipment_id obligatoire' });
+    if (!ALLOWED.includes(type)) return res.status(400).json({ error: `Type invalide: ${type}` });
+    if (!equipment_id)           return res.status(400).json({ error: 'equipment_id obligatoire' });
 
     try {
       const { rows: [eq] } = await query(
@@ -472,13 +436,13 @@ export async function createApp() {
       const sourceZoneId = from_zone_id || eq.zone_id;
 
       if (type === 'transfert') {
-        if (!to_zone_id) return res.status(400).json({ error: 'Zone obligatoire pour un transfert.' });
-        if (to_zone_id !== sourceZoneId) return res.status(400).json({ error: 'Transfert refusé : zone de destination différente. Utilisez un déploiement.' });
-        if (!to_station_id) return res.status(400).json({ error: 'Station obligatoire pour un transfert.' });
+        if (!to_zone_id)                          return res.status(400).json({ error: 'Zone obligatoire pour un transfert.' });
+        if (to_zone_id !== sourceZoneId)          return res.status(400).json({ error: 'Transfert refusé : zone différente. Utilisez un déploiement.' });
+        if (!to_station_id)                       return res.status(400).json({ error: 'Station obligatoire pour un transfert.' });
       }
-      if (type === 'retour' && !to_zone_id) return res.status(400).json({ error: 'Zone (labo) obligatoire pour un retour.' });
-      if (type === 'ajustement' && !new_status) return res.status(400).json({ error: 'Nouveau statut obligatoire.' });
-      if (type === 'deploiement' && !to_zone_id) return res.status(400).json({ error: 'Zone de deploiement obligatoire.' });
+      if (type === 'retour'      && !to_zone_id)  return res.status(400).json({ error: 'Zone obligatoire pour un retour.' });
+      if (type === 'ajustement'  && !new_status)  return res.status(400).json({ error: 'Nouveau statut obligatoire.' });
+      if (type === 'deploiement' && !to_zone_id)  return res.status(400).json({ error: 'Zone de déploiement obligatoire.' });
 
       const updates: Record<string, any> = {
         entree:      { zone_id: to_zone_id, station_id: to_station_id || null },
@@ -501,8 +465,7 @@ export async function createApp() {
         [
           equipment_id, type, userId,
           note || null, reference || null,
-          sourceZoneId || null,
-          from_station_id || eq.station_id || null,
+          sourceZoneId || null, from_station_id || eq.station_id || null,
           to_zone_id || null, to_station_id || null,
           eq.status, new_status || upd.status || eq.status,
           date_deploiement || null, date_retour_prevue || null,
@@ -510,19 +473,10 @@ export async function createApp() {
       );
       res.status(201).json(mv);
 
-      // ─── Broadcast SSE pour événements critiques ───────────
-      const criticalTypes = ['sortie', 'hors_service'];
-      if (criticalTypes.includes(type) || new_status === 'hors_service') {
+      if (['sortie', 'hors_service'].includes(type) || new_status === 'hors_service') {
         (req.app as any).broadcastEvent?.({
           type: 'equipment_critical',
-          payload: {
-            equipment_id,
-            movement_type: type,
-            new_status: new_status || upd.status || eq.status,
-            message: type === 'sortie'
-              ? `Équipement sorti du parc`
-              : `Équipement passé hors service`,
-          }
+          payload: { equipment_id, movement_type: type, new_status: new_status || upd.status || eq.status }
         });
       }
     } catch (e: any) {
@@ -531,30 +485,25 @@ export async function createApp() {
     }
   });
 
-  // ─── Historique complet par équipement ───────────────────
+  // Historique équipement
   app.get("/api/equipment/:id/history", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { rows } = await query(`
-        SELECT
-          m.id, m.type, m.note, m.reference,
+        SELECT m.id, m.type, m.note, m.reference,
           m.previous_status, m.new_status,
-          m.date_deploiement, m.date_retour_prevue,
-          m.created_at,
+          m.date_deploiement, m.date_retour_prevue, m.created_at,
           u.display_name  AS performed_by_name,
-          fz.name         AS from_zone_name,
-          fs.name         AS from_station_name,
-          tz.name         AS to_zone_name,
-          ts2.name        AS to_station_name
+          fz.name AS from_zone_name, fs.name AS from_station_name,
+          tz.name AS to_zone_name,  ts2.name AS to_station_name
         FROM movements m
-        LEFT JOIN users    u   ON u.id = m.performed_by
+        LEFT JOIN users    u   ON u.id  = m.performed_by
         LEFT JOIN zones    fz  ON fz.id = m.from_zone_id
         LEFT JOIN stations fs  ON fs.id = m.from_station_id
         LEFT JOIN zones    tz  ON tz.id = m.to_zone_id
         LEFT JOIN stations ts2 ON ts2.id = m.to_station_id
         WHERE m.equipment_id = $1
-        ORDER BY m.created_at DESC
-        LIMIT 100
+        ORDER BY m.created_at DESC LIMIT 100
       `, [id]);
       res.json(rows);
     } catch (e: any) {
@@ -562,9 +511,8 @@ export async function createApp() {
     }
   });
 
-  // ─── SSE : notifications temps réel ──────────────────────
+  // SSE notifications
   const sseClients = new Set<any>();
-
   app.get("/api/events", authenticateToken, (req: any, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -574,83 +522,50 @@ export async function createApp() {
 
     const client = { res, userId: req.user.id, role: req.user.role };
     sseClients.add(client);
-
     const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
-    req.on("close", () => {
-      clearInterval(keepAlive);
-      sseClients.delete(client);
-    });
+    req.on("close", () => { clearInterval(keepAlive); sseClients.delete(client); });
   });
 
-  // Helper pour broadcaster un événement SSE
   (app as any).broadcastEvent = (event: { type: string; payload: any }) => {
     const data = `data: ${JSON.stringify(event)}\n\n`;
-    sseClients.forEach((client: any) => {
-      try { client.res.write(data); } catch {}
-    });
+    sseClients.forEach((client: any) => { try { client.res.write(data); } catch {} });
   };
 
   // Config
   app.get("/api/config", getConfig);
   app.get("/api/admin/config", authenticateToken, getConfig);
-
   app.post("/api/admin/config", authenticateToken, authorize(['admin']), async (req, res) => {
-    try {
-      const result = await AdminService.saveConfig(req.body);
-      res.json(result);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+    try { res.json(await AdminService.saveConfig(req.body)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Admin Users
   app.get("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
-    try {
-      const users = await AdminService.getUsers();
-      res.json(users);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+    try { res.json(await AdminService.getUsers()); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
-    try {
-      const result = await AdminService.createUser(req.body);
-      res.status(201).json(result);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+    try { res.status(201).json(await AdminService.createUser(req.body)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.put("/api/admin/users/:id/role", authenticateToken, authorize(['admin']), async (req, res) => {
-    try {
-      const result = await AdminService.updateUserRole(req.params.id, req.body.role);
-      res.json(result);
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+    try { res.json(await AdminService.updateUserRole(req.params.id, req.body.role)); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.delete("/api/admin/users/:id", authenticateToken, authorize(['admin']), async (req, res) => {
-    try {
-      await AdminService.deleteUser(req.params.id);
-      res.json({ success: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
+    try { await AdminService.deleteUser(req.params.id); res.json({ success: true }); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req, res) => {
     try {
-      const { id } = req.params;
       const { newPassword } = req.body;
-      if (!newPassword) {
-        return res.status(400).json({ error: "Nouveau mot de passe requis" });
-      }
-      const result = await AdminService.resetPassword(id, newPassword);
-      res.json({ success: true, user: result });
+      if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
+      res.json({ success: true, user: await AdminService.resetPassword(req.params.id, newPassword) });
     } catch (err: any) {
-      console.error("Erreur reset password:", err);
       res.status(500).json({ error: err.message || "Erreur serveur" });
     }
   });
@@ -675,8 +590,7 @@ export async function createApp() {
 
 async function getConfig(req: any, res: any) {
   try {
-    const data = await AdminService.getFullConfig();
-    res.json(data);
+    res.json(await AdminService.getFullConfig());
   } catch (e: any) {
     console.error("[API] Config Error:", e);
     res.status(500).json({ error: e.message });
