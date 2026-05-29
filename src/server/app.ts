@@ -389,14 +389,14 @@ export async function createApp() {
       const sql = `
         SELECT m.*,
           e.name          AS equipment_name,
-          u.display_name  AS performed_by_name,
+          COALESCE(u.display_name, m.performed_by_name, 'Utilisateur supprimé') AS performed_by_name,
           fz.name         AS from_zone_name,
           fs.name         AS from_station_name,
           tz.name         AS to_zone_name,
           ts2.name        AS to_station_name
         FROM movements m
         LEFT JOIN equipment e  ON e.id = m.equipment_id
-        LEFT JOIN users    u   ON u.id = m.performed_by
+        LEFT JOIN users    u   ON u.id = m.performed_by AND u.deleted_at IS NULL
         LEFT JOIN zones    fz  ON fz.id = m.from_zone_id
         LEFT JOIN stations fs  ON fs.id = m.from_station_id
         LEFT JOIN zones    tz  ON tz.id = m.to_zone_id
@@ -458,12 +458,13 @@ export async function createApp() {
 
       const { rows: [mv] } = await query(
         `INSERT INTO movements
-          (equipment_id, type, performed_by, note, reference,
+          (equipment_id, type, performed_by, performed_by_name, note, reference,
            from_zone_id, from_station_id, to_zone_id, to_station_id,
            previous_status, new_status, date_deploiement, date_retour_prevue)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [
           equipment_id, type, userId,
+          req.user.display_name || req.user.username || "Inconnu",
           note || null, reference || null,
           sourceZoneId || null, from_station_id || eq.station_id || null,
           to_zone_id || null, to_station_id || null,
@@ -493,7 +494,7 @@ export async function createApp() {
         SELECT m.id, m.type, m.note, m.reference,
           m.previous_status, m.new_status,
           m.date_deploiement, m.date_retour_prevue, m.created_at,
-          u.display_name  AS performed_by_name,
+          COALESCE(u.display_name, m.performed_by_name, 'Utilisateur supprimé') AS performed_by_name,
           fz.name AS from_zone_name, fs.name AS from_station_name,
           tz.name AS to_zone_name,  ts2.name AS to_station_name
         FROM movements m
@@ -543,6 +544,15 @@ export async function createApp() {
   app.get("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
     try { res.json(await AdminService.getUsers()); }
     catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Utilisateurs connectés (sessions SSE actives)
+  app.get("/api/admin/users/online", authenticateToken, authorize(['admin']), (req, res) => {
+    const online = Array.from(sseClients).map((c: any) => ({
+      userId: c.userId,
+      role:   c.role,
+    }));
+    res.json(online);
   });
 
   app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {

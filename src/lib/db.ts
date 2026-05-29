@@ -1,52 +1,41 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 import { newDb } from 'pg-mem';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
 
-// Local persistence path for pg-mem mode
-const JOURNAL_PATH = path.join(process.cwd(), 'helios_journal.log');
+dotenv.config();
 
 let pool: any;
 let isRealPostgres = false;
 
-/**
- * Initialize the database connection. 
- * Attempts to connect to real PostgreSQL if config is present, 
- * otherwise falls back to pg-mem.
- */
-async function initializeDB() {
-  const envUrl = process.env.DATABASE_URL;
-  const envHost = process.env.PGHOST;
-  
-  if (envUrl || envHost) {
-    try {
-      console.log('[DB] Tentative de connexion au PostgreSQL réel...');
-      // Small timeout for the check to avoid hanging
-      const tempPool = new Pool({
-        connectionString: envUrl,
-        connectionTimeoutMillis: 5000,
-      });
-      
-      // Test the connection
-      await tempPool.query('SELECT 1');
-      console.log('[DB] Connexion PostgreSQL Réel établie avec succès.');
-      
-      pool = tempPool;
-      isRealPostgres = true;
-      return;
-    } catch (err: any) {
-      console.error(`[DB] Échec de connexion PostgreSQL Réel: ${err.message}`);
-      console.log('[DB] Basculement en mode En-Mémoire (pg-mem) par sécurité.');
-    }
-  }
+export async function connectDB() {
+  const connectionString = process.env.DATABASE_URL;
 
-  // Fallback to pg-mem
-  console.log('[DB] Initialisation du mode En-Mémoire (pg-mem).');
+  if (connectionString) {
+    try {
+      pool = new Pool({ 
+        connectionString,
+        ssl: connectionString.includes('supabase') || connectionString.includes('render') || connectionString.includes('google') 
+             ? { rejectUnauthorized: false } 
+             : false
+      });
+      await pool.query('SELECT 1');
+      isRealPostgres = true;
+      console.log('[DB] Connecté à PostgreSQL Réel.');
+    } catch (err) {
+      console.error('[DB] Échec de connexion PostgreSQL:', (err as Error).message);
+      setupMemoryDB();
+    }
+  } else {
+    setupMemoryDB();
+  }
+}
+
+function setupMemoryDB() {
+  console.log('[DB] Mode de secours : Base de données En-Mémoire activée.');
   const memDb = newDb();
   
-  // Register gen_random_uuid for pg-mem compatibility
   memDb.public.registerFunction({
     name: 'gen_random_uuid',
     returns: (memDb as any).getType('uuid'),
@@ -58,103 +47,143 @@ async function initializeDB() {
   isRealPostgres = false;
 }
 
-// Global initialization state
-let initialized = false;
-
-interface JournalEntry {
-  text: string;
-  params: any[];
+export async function query(text: string, params?: any[]) {
+  if (!pool) await connectDB();
+  return pool.query(text, params);
 }
 
-/**
- * Persist a query to the journal (Only for pg-mem fallback)
- */
-function appendToJournal(text: string, params: any[]) {
-  if (isRealPostgres) return; 
-  try {
-    const entry: JournalEntry = { text, params };
-    fs.appendFileSync(JOURNAL_PATH, JSON.stringify(entry) + '\n');
-  } catch (err) {
-    console.error('[DB] Erreur de journalisation:', err);
-  }
-}
+export async function initSchema() {
+  console.log('[DB] Initialisation du schéma...');
+  
+  if (isRealPostgres) {
+    try { await query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'); } catch (e) {}
 
-/**
- * Replay the journal to restore state (Only for pg-mem fallback)
- */
-async function loadData() {
-  if (isRealPostgres) return;
-  try {
-    if (fs.existsSync(JOURNAL_PATH)) {
-      console.log('[DB] Restauration du journal PostgreSQL en-mémoire...');
-      const content = fs.readFileSync(JOURNAL_PATH, 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim() !== '');
-      
-      let count = 0;
-      for (const line of lines) {
-        try {
-          const entry: JournalEntry = JSON.parse(line);
-          await pool.query(entry.text, entry.params);
-          count++;
-        } catch (e: any) {
-          console.warn(`[DB] Ligne de journal corrompue ignorée: ${e.message}`);
-        }
-      }
-      console.log(`[DB] ${count} opérations rejouées avec succès.`);
-    }
-  } catch (err) {
-    console.error('[DB] Erreur critique de chargement du journal:', err);
-  }
-}
+    // ── Migration : rendre email nullable ─────────────────────────────────────
+    try {
+      await query(`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`);
+      console.log('[DB] Migration: colonne email rendue nullable.');
+    } catch (e) {}
 
-/**
- * Public Initialization
- */
-export async function initPersistence() {
-  if (!initialized) {
-    await initializeDB();
-    initialized = true;
-  }
-  await loadData();
-}
-
-/**
- * Execute a query with simulation of RLS context if needed
- */
-export async function queryHelios(text: string, params: any[] = [], userContext: { id: string, role: string }) {
-  // RLS logic could be added here for Real PG
-  return query(text, params);
-}
-
-/**
- * Standard query for PostgreSQL tasks.
- * Ensures the DB is initialized before executing.
- */
-export async function query(text: string, params: any[] = []) {
-  if (!initialized) {
-    await initializeDB();
-    initialized = true;
-  }
-
-  try {
-    const result = await pool.query(text, params);
-    
-    if (!isRealPostgres) {
-      const isWrite = /insert|update|delete/i.test(text);
-      if (isWrite) {
-        appendToJournal(text, params);
-      }
+    // ── Migration : snapshot du nom agent dans movements (traçabilité) ────────
+    // Permet de conserver le nom même si l'utilisateur est supprimé
+    try {
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS performed_by_name VARCHAR(255)`);
+      // Remplir les lignes existantes qui n'ont pas encore le snapshot
+      await query(`
+        UPDATE movements m
+        SET performed_by_name = u.display_name
+        FROM users u
+        WHERE m.performed_by = u.id
+          AND m.performed_by_name IS NULL
+      `);
+      console.log('[DB] Migration: performed_by_name ajouté (traçabilité agents).');
+    } catch (e) {
+      // Déjà fait ou table inexistante
     }
 
-    return result;
-  } catch (err: any) {
-    console.error(`[PostgreSQL Engine Error]`, err.message);
-    console.error(`SQL: ${text}`);
-    throw err;
+    // ── Migration : snapshot du nom créateur dans equipment ──────────────────
+    try {
+      await query(`ALTER TABLE equipment ADD COLUMN IF NOT EXISTS created_by_name VARCHAR(255)`);
+      await query(`
+        UPDATE equipment e
+        SET created_by_name = u.display_name
+        FROM users u
+        WHERE e.created_by = u.id
+          AND e.created_by_name IS NULL
+      `);
+      console.log('[DB] Migration: created_by_name ajouté (traçabilité équipements).');
+    } catch (e) {}
   }
+
+  const tables = [
+    // email est maintenant NULL par défaut (identifiant = username)
+    `CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username VARCHAR(128) UNIQUE NOT NULL,
+      email VARCHAR(255) UNIQUE,
+      password_hash TEXT,
+      display_name VARCHAR(255),
+      role VARCHAR(50) DEFAULT 'agent_logistique',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS categories (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      code VARCHAR(50) UNIQUE NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS zones (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(150) UNIQUE NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS stations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      zone_id UUID REFERENCES zones(id),
+      name VARCHAR(150) NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(zone_id, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS category_fields (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      category_id UUID REFERENCES categories(id),
+      label VARCHAR(100) NOT NULL,
+      type VARCHAR(50) DEFAULT 'text',
+      sort_order INTEGER DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS equipment (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(200) NOT NULL,
+      category_id UUID NOT NULL REFERENCES categories(id),
+      status VARCHAR(50) DEFAULT 'fonctionnel' NOT NULL,
+      zone_id UUID REFERENCES zones(id),
+      station_id UUID REFERENCES stations(id),
+      service_id UUID REFERENCES zones(id),
+      bureau_id UUID REFERENCES stations(id),
+      created_by UUID NOT NULL REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS equipment_details (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id UUID REFERENCES equipment(id),
+      field_key VARCHAR(100) NOT NULL,
+      field_value TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS movements (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id UUID NOT NULL REFERENCES equipment(id),
+      type         VARCHAR(50) NOT NULL
+                   CHECK (type IN ('entree','sortie','transfert','retour','ajustement','deploiement')),
+      performed_by UUID NOT NULL REFERENCES users(id),
+      from_zone_id    UUID REFERENCES zones(id),
+      from_station_id UUID REFERENCES stations(id),
+      to_zone_id    UUID REFERENCES zones(id),
+      to_station_id UUID REFERENCES stations(id),
+      previous_status VARCHAR(50),
+      new_status      VARCHAR(50),
+      date_deploiement    DATE,
+      date_retour_prevue  DATE,
+      note       TEXT,
+      reference  VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  ];
+
+  for (const sql of tables) {
+    await query(sql);
+  }
+
+  console.log('[DB] Schéma prêt.');
 }
 
-export default {
-  get pool() { return pool; },
-  get isRealPostgres() { return isRealPostgres; }
-};
+export { isRealPostgres };

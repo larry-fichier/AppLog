@@ -1,4 +1,3 @@
-import { apiFetch } from "@/lib/api";
 import { useState, useEffect } from "react";
 import { ArrowLeftRight, Search, Filter, Loader2 } from "lucide-react";
 import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Truck } from "lucide-react";
@@ -44,20 +43,20 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
   const canEdit = ["agent_logistique", "admin"].includes(activeRole || "");
 
   async function fetchMovements() {
-    setLoading(true);
-    try {
-      const res = await apiFetch('/api/movements');
-      if (res.ok) setRows(await res.json());
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }
+  setLoading(true);
+  try {
+    const res = await fetch('/api/movements', { credentials: "include" });
+    if (res.ok) setRows(await res.json());
+  } catch (e) { console.error(e); }
+  finally { setLoading(false); }
+}
 
-  async function fetchEquipment() {
-    try {
-      const res = await apiFetch('/api/equipment');
-      if (res.ok) setEquipment(await res.json());
-    } catch (e) { console.error(e); }
-  }
+async function fetchEquipment() {
+  try {
+    const res = await fetch('/api/equipment', { credentials: "include" });
+    if (res.ok) setEquipment(await res.json());
+  } catch (e) { console.error(e); }
+}
 
   useEffect(() => {
     fetchMovements();

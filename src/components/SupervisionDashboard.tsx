@@ -347,23 +347,29 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   const [loading,     setLoading]    = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
-  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "alertes";
+  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "alertes" | "utilisateurs";
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [activeCat,  setActiveCat]  = useState("all");
   const [searchInv,  setSearchInv]  = useState("");
+  const [allUsers,   setAllUsers]   = useState<any[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
   const [searchMov,  setSearchMov]  = useState("");
   const [filterType, setFilterType] = useState("all");
   const [journalSearch, setJournalSearch] = useState("");
 
   const fetchAll = useCallback(async () => {
     try {
-      const [eqRes, mvRes] = await Promise.all([
+      const [eqRes, mvRes, usersRes, onlineRes] = await Promise.all([
         apiFetch("/api/equipment"),
         apiFetch("/api/movements"),
+        apiFetch("/api/admin/users"),
+        apiFetch("/api/admin/users/online"),
       ]);
       if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
       if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
       else setMovements([]);
+      if (usersRes.ok) setAllUsers(await usersRes.json());
+      if (onlineRes.ok) setOnlineUsers(await onlineRes.json());
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -837,12 +843,13 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   );
 
   const TABS = [
-    { id: "overview",   label: "Vue d'ensemble",            icon: <BarChart3 size={13} /> },
-    { id: "inventaire", label: `Inventaire (${total})`,     icon: <Eye size={13} /> },
-    { id: "mouvements", label: `Mouvements (${movements.length})`, icon: <Activity size={13} /> },
-    { id: "analyse",    label: "Analyse",                   icon: <FlaskConical size={13} /> },
-    { id: "journal",    label: `Journal (${journal.length})`, icon: <BookOpen size={13} /> },
-    { id: "alertes",    label: `Alertes (${alerts.length})`, icon: <AlertTriangle size={13} /> },
+    { id: "overview",      label: "Vue d'ensemble",                  icon: <BarChart3 size={13} /> },
+    { id: "inventaire",    label: `Inventaire (${total})`,           icon: <Eye size={13} /> },
+    { id: "mouvements",    label: `Mouvements (${movements.length})`, icon: <Activity size={13} /> },
+    { id: "analyse",       label: "Analyse",                         icon: <FlaskConical size={13} /> },
+    { id: "journal",       label: `Journal (${journal.length})`,     icon: <BookOpen size={13} /> },
+    { id: "alertes",       label: `Alertes (${alerts.length})`,      icon: <AlertTriangle size={13} /> },
+    { id: "utilisateurs",  label: `Utilisateurs (${allUsers.length})`, icon: <User size={13} /> },
   ] as { id: Tab; label: string; icon: React.ReactNode }[];
 
   return (
@@ -1422,6 +1429,143 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ══ TAB UTILISATEURS ══ */}
+      {activeTab === "utilisateurs" && (
+        <div className="flex flex-col gap-6">
+
+          {/* Sessions actives */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+              <h3 className="font-black text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Sessions actives en ce moment
+              </h3>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                onlineUsers.length > 0
+                  ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                  : "bg-slate-50 dark:bg-slate-700 text-slate-400 border-slate-200 dark:border-slate-600"
+              }`}>{onlineUsers.length} connecté{onlineUsers.length !== 1 ? "s" : ""}</span>
+            </div>
+            {onlineUsers.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-slate-300">
+                <User size={28} strokeWidth={1} />
+                <p className="text-xs text-slate-400 font-bold">Aucune session active</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                {onlineUsers.map((u, i) => {
+                  const user = allUsers.find(a => a.id === u.userId);
+                  return (
+                    <div key={i} className="px-5 py-3 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center shrink-0">
+                        <User size={14} className="text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-xs font-black text-slate-800 dark:text-slate-200">{user?.display_name || user?.username || u.userId?.substring(0, 8)}</p>
+                        <p className="text-[10px] text-slate-400">{u.role}</p>
+                      </div>
+                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />EN LIGNE
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Tous les utilisateurs */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+              <h3 className="font-black text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
+                <User size={14} className="text-accent" />Tous les comptes utilisateurs
+              </h3>
+              <span className="text-[10px] text-slate-400 font-bold">{allUsers.length} compte{allUsers.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div className="overflow-auto max-h-[500px]">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900 sticky top-0 border-b border-slate-200 dark:border-slate-700">
+                  <tr>
+                    {["Utilisateur", "Identifiant", "Rôle", "Créé le", "Activité", "Statut"].map(h => (
+                      <th key={h} className="text-left text-[10px] font-black text-zinc-400 dark:text-slate-500 uppercase tracking-widest h-10 px-5 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allUsers.length === 0 ? (
+                    <tr><td colSpan={6} className="h-20 text-center text-xs text-slate-300 italic">Aucun utilisateur</td></tr>
+                  ) : allUsers.map(u => {
+                    const isOnline = onlineUsers.some(o => o.userId === u.id);
+                    // Compter les opérations de cet utilisateur
+                    const opCount = movements.filter(m =>
+                      m.performed_by_name === u.display_name || m.performed_by_name === u.username
+                    ).length;
+                    const lastOp = movements.filter(m =>
+                      m.performed_by_name === u.display_name || m.performed_by_name === u.username
+                    ).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+                    return (
+                      <tr key={u.id} className="border-b border-zinc-100 dark:border-slate-700 hover:bg-zinc-50 dark:hover:bg-slate-700/50 transition-colors">
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 border ${
+                              isOnline ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400" : "bg-slate-100 dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-500"
+                            }`}>
+                              {(u.display_name || u.username || "?")[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-black text-slate-800 dark:text-slate-200 text-xs">{u.display_name || u.username}</p>
+                              {u.email && <p className="text-[10px] text-slate-400">{u.email}</p>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="font-mono text-[11px] bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-600 dark:text-slate-300">{u.username}</span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${
+                            u.role === "admin" ? "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800" :
+                            u.role === "agent_logistique" ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800" :
+                            "bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600"
+                          }`}>{u.role}</span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">{u.created_at ? fmtDate(u.created_at) : "—"}</span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <p className="text-[11px] font-black text-slate-700 dark:text-slate-300">{opCount} opération{opCount !== 1 ? "s" : ""}</p>
+                          {lastOp && <p className="text-[10px] text-slate-400">Dernière: {fmtDate(lastOp.created_at)}</p>}
+                        </td>
+                        <td className="px-5 py-3">
+                          {isOnline ? (
+                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 w-fit">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />EN LIGNE
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold text-slate-300 dark:text-slate-600">Hors ligne</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Traçabilité — note sur la conservation des données */}
+          <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl px-5 py-4 flex items-start gap-3">
+            <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-black text-amber-800 dark:text-amber-400">Traçabilité garantie après suppression</p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-500 mt-1">
+                Même si un compte est supprimé, toutes ses actions restent visibles dans le journal d'activité avec son nom complet. Le nom de l'agent est conservé au moment de chaque opération.
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </div>
