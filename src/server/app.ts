@@ -540,14 +540,14 @@ export async function createApp() {
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  // Admin Users
-  app.get("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
+  // Admin Users — lecture ouverte aux superviseurs, écriture admin seulement
+  app.get("/api/admin/users", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), async (req, res) => {
     try { res.json(await AdminService.getUsers()); }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  // Utilisateurs connectés (sessions SSE actives)
-  app.get("/api/admin/users/online", authenticateToken, authorize(['admin']), (req, res) => {
+  // Utilisateurs connectés — ouvert aux superviseurs
+  app.get("/api/admin/users/online", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), (req, res) => {
     const online = Array.from(sseClients).map((c: any) => ({
       userId: c.userId,
       role:   c.role,
