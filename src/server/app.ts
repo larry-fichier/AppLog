@@ -118,7 +118,7 @@ export async function createApp() {
   function cookieOptions() {
     return {
       httpOnly: true,
-      secure: config.nodeEnv === 'production',
+      secure: process.env.COOKIE_SECURE === 'true',
       sameSite: 'lax' as const,
       // Pas de maxAge → cookie de session : supprimé dès que le navigateur est fermé
     };
@@ -157,7 +157,7 @@ export async function createApp() {
     res.clearCookie("auth_token", {
       httpOnly: true,
       sameSite: "lax",
-      secure: config.nodeEnv === 'production',
+      secure: process.env.COOKIE_SECURE === 'true',
     });
     res.json({ success: true });
   });
