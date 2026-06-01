@@ -136,7 +136,8 @@ export async function initSchema() {
       equipment_id UUID NOT NULL REFERENCES equipment(id),
       type         VARCHAR(50) NOT NULL
                    CHECK (type IN ('entree','sortie','transfert','retour','ajustement','deploiement')),
-      performed_by UUID NOT NULL REFERENCES users(id),
+      performed_by      UUID NOT NULL REFERENCES users(id),
+      performed_by_name VARCHAR(255),
       from_zone_id    UUID REFERENCES zones(id),
       from_station_id UUID REFERENCES stations(id),
       to_zone_id    UUID REFERENCES zones(id),
@@ -153,6 +154,16 @@ export async function initSchema() {
 
   for (const sql of tables) {
     await query(sql);
+  }
+
+  // ── Migration : ajouter performed_by_name si absente (bases existantes) ──
+  if (isRealPostgres) {
+    try {
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS performed_by_name VARCHAR(255)`);
+      console.log('[DB] Migration: colonne performed_by_name ajoutée à movements.');
+    } catch (e) {
+      // Déjà existante — ignoré
+    }
   }
 
   console.log('[DB] Schéma prêt.');
