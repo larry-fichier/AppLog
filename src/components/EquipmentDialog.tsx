@@ -485,6 +485,11 @@ export function EquipmentDialog({
   };
 
   const handleNextStep = () => {
+    // Pour cuisine : le N° inventaire est auto-généré, pas besoin de le valider
+    if (isCuisineCategory) {
+      document.getElementById("equipment-form-submit")?.click();
+      return;
+    }
     const serialValue = serialField ? details[serialField.key]?.toString().trim() : "";
     if (useSerialAsName && !serialValue) {
       toast.error(`"${serialField?.label}" est obligatoire`);
@@ -500,7 +505,15 @@ export function EquipmentDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const serialValue = serialField ? details[serialField.key]?.toString().trim() : "";
+    // Pour cuisine : générer le N° inventaire AVANT de calculer finalName
+    // car le champ est grisé (vide) et le nom dépend de ce numéro
+    if (isCuisineCategory && !item?.id) {
+      const generated = generateInventoryNumber(categoryLabelForFields, details);
+      setDetail("numero_inventaire", generated);
+      details["numero_inventaire"] = generated; // màj locale immédiate pour la suite
+    }
+
+    const serialValue = serialField ? (details[serialField.key]?.toString().trim() || "") : "";
 
     // Pour armement : le name principal = designation, le serial reste juste dans details
     // Pour les autres catégories avec serial (outillage, etc.) : le serial EST le name

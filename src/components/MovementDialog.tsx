@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, Pencil } from "lucide-react";
 import {
   Dialog, DialogContent,
   DialogTitle, DialogDescription,
@@ -32,6 +32,20 @@ const NEEDS_DESTINATION: MovType[] = ['entree', 'transfert', 'retour', 'deploiem
 const SHOW_SOURCE: MovType[]       = ['sortie', 'transfert', 'retour', 'deploiement'];
 const NEEDS_DATES: MovType[]       = ['deploiement'];
 
+interface Movement {
+  id: string;
+  type: string;
+  note?: string;
+  reference?: string;
+  to_zone_id?: string;
+  to_station_id?: string;
+  from_zone_id?: string;
+  from_station_id?: string;
+  new_status?: string;
+  date_deploiement?: string;
+  date_retour_prevue?: string;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -43,13 +57,17 @@ interface Props {
   zones: { id: string; label: string }[];
   stations: { id: string; label: string; zoneId: string }[];
   onSuccess?: () => void;
+  // Pour la modification d'un mouvement existant
+  editingMovement?: Movement | null;
 }
 
 export function MovementDialog({
   open, onOpenChange, equipmentId, equipmentName,
   currentZoneId, currentStationId, currentStatus = 'fonctionnel',
-  zones, stations, onSuccess,
+  zones, stations, onSuccess, editingMovement,
 }: Props) {
+  const isEditing = !!editingMovement;
+
   const [loading, setLoading]                   = useState(false);
   const [type, setType]                         = useState<MovType>('transfert');
   const [toZoneId, setToZoneId]                 = useState('');
@@ -60,10 +78,34 @@ export function MovementDialog({
   const [dateDeploiement, setDateDeploiement]   = useState('');
   const [dateRetourPrevue, setDateRetourPrevue] = useState('');
 
+  // Pré-remplir si on est en mode édition
+  useEffect(() => {
+    if (open && editingMovement) {
+      setType((editingMovement.type as MovType) || 'transfert');
+      setToZoneId(editingMovement.to_zone_id || '');
+      setToStationId(editingMovement.to_station_id || '');
+      setNewStatus(editingMovement.new_status || currentStatus);
+      setNote(editingMovement.note || '');
+      setReference(editingMovement.reference || '');
+      setDateDeploiement(editingMovement.date_deploiement?.split('T')[0] || '');
+      setDateRetourPrevue(editingMovement.date_retour_prevue?.split('T')[0] || '');
+    } else if (open && !editingMovement) {
+      setType('transfert');
+      setToZoneId('');
+      setToStationId('');
+      setNewStatus(currentStatus);
+      setNote('');
+      setReference(generateReference('transfert', stations.find(s => s.id === currentStationId), undefined));
+      setDateDeploiement('');
+      setDateRetourPrevue('');
+    }
+  }, [open, editingMovement]);
+
   const filteredDest = stations.filter(s => {
     if (!toZoneId) return false;
     const stZoneId = (s as any).zoneId || (s as any).zone_id;
     if (stZoneId !== toZoneId) return false;
+    // Pour transfert, exclure la station actuelle
     if (type === 'transfert' && s.id === currentStationId) return false;
     return true;
   }).sort((a, b) => a.label.localeCompare(b.label));
@@ -114,19 +156,13 @@ export function MovementDialog({
     setReference(generateReference(t, currentStation, undefined));
   };
 
-  // Auto-switch transfert <-> deploiement selon si la zone choisie
-  // est identique ou différente de la zone actuelle de l'équipement.
+  // ✅ CORRIGÉ — plus d'auto-switch entre transfert et deploiement
+  // L'utilisateur choisit explicitement le type, la zone ne change plus le type
   const handleToZoneChange = (zoneId: string) => {
-    let effectiveType = type;
-    if (type === 'transfert' || type === 'deploiement') {
-      effectiveType = zoneId === currentZoneId ? 'transfert' : 'deploiement';
-      setType(effectiveType);
-    }
     setToZoneId(zoneId);
     setToStationId('');
-    setDateDeploiement('');
-    setDateRetourPrevue('');
-    setReference(generateReference(effectiveType, currentStation, undefined));
+    const toSt = undefined;
+    setReference(generateReference(type, currentStation, toSt));
   };
 
   const handleToStationChange = (stId: string) => {
@@ -134,10 +170,6 @@ export function MovementDialog({
     const toSt = stations.find(s => s.id === stId);
     setReference(generateReference(type, currentStation, toSt));
   };
-
-  useState(() => {
-    setReference(generateReference('transfert', currentStation, undefined));
-  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,26 +185,46 @@ export function MovementDialog({
 
     setLoading(true);
     try {
-      const res = await apiFetch('/api/movements', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          equipment_id:       equipmentId,
-          type,
-          from_zone_id:       currentZoneId    || null,
-          from_station_id:    currentStationId || null,
-          to_zone_id:         needsDestination ? toZoneId    : null,
-          to_station_id:      needsDestination ? toStationId : null,
-          new_status:         needsStatus ? newStatus : null,
-          date_deploiement:   needsDates ? dateDeploiement   || null : null,
-          date_retour_prevue: needsDates ? dateRetourPrevue  || null : null,
-          note:               note.trim()      || null,
-          reference:          reference.trim() || null,
-        }),
-      });
+      let res;
+
+      if (isEditing && editingMovement) {
+        // ── Mode modification ──────────────────────────────────
+        res = await apiFetch(`/api/movements/${editingMovement.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            note:               note.trim()      || null,
+            reference:          reference.trim() || null,
+            date_deploiement:   needsDates ? dateDeploiement   || null : null,
+            date_retour_prevue: needsDates ? dateRetourPrevue  || null : null,
+            to_zone_id:         needsDestination ? toZoneId    : null,
+            to_station_id:      needsDestination ? toStationId : null,
+            new_status:         needsStatus ? newStatus : null,
+          }),
+        });
+      } else {
+        // ── Mode création ──────────────────────────────────────
+        res = await apiFetch('/api/movements', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            equipment_id:       equipmentId,
+            type,
+            from_zone_id:       currentZoneId    || null,
+            from_station_id:    currentStationId || null,
+            to_zone_id:         needsDestination ? toZoneId    : null,
+            to_station_id:      needsDestination ? toStationId : null,
+            new_status:         needsStatus ? newStatus : null,
+            date_deploiement:   needsDates ? dateDeploiement   || null : null,
+            date_retour_prevue: needsDates ? dateRetourPrevue  || null : null,
+            note:               note.trim()      || null,
+            reference:          reference.trim() || null,
+          }),
+        });
+      }
 
       if (res.ok) {
-        toast.success('Mouvement enregistré');
+        toast.success(isEditing ? 'Mouvement mis à jour' : 'Mouvement enregistré');
         onSuccess?.();
         onOpenChange(false);
       } else {
@@ -192,43 +244,51 @@ export function MovementDialog({
 
         {/* Header */}
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 pb-5">
-          <DialogTitle className="text-lg font-black text-white">
-            Enregistrer un mouvement
+          <DialogTitle className="text-lg font-black text-white flex items-center gap-2">
+            {isEditing && <Pencil size={16} className="text-amber-400" />}
+            {isEditing ? 'Modifier le mouvement' : 'Enregistrer un mouvement'}
           </DialogTitle>
           <DialogDescription className="text-slate-400 text-xs mt-0.5">
             {equipmentName}
           </DialogDescription>
+          {isEditing && (
+            <div className="mt-2 text-[10px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-1.5">
+              ⚠️ Modification — seuls la note, la référence, les dates et la destination sont modifiables
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-5 max-h-[65vh] overflow-y-auto">
 
-            {/* Type de mouvement */}
+            {/* Type de mouvement — lecture seule en mode édition */}
             <div className="space-y-2">
               <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
                 Type de mouvement
               </Label>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {MOVEMENT_TYPES.map(mt => (
-                  <button key={mt.value} type="button"
-                    onClick={() => handleTypeChange(mt.value)}
-                    className={`p-3 rounded-xl border-2 text-left transition-all ${
-                      type === mt.value
-                        ? `${mt.color} border-current`
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}>
-                    <p className="text-xs font-black">{mt.label}</p>
-                    <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{mt.desc}</p>
-                  </button>
-                ))}
-              </div>
-
-              {/* Hint auto-switch visible quand transfert ou deploiement actif */}
-              {(type === 'transfert' || type === 'deploiement') && (
-                <p className="text-[10px] text-slate-400 italic">
-                  Bascule automatique — <strong>Transfert</strong> si même zone ·{' '}
-                  <strong>Déploiement</strong> si zone différente
-                </p>
+              {isEditing ? (
+                // En mode édition : afficher le type sans pouvoir le changer
+                <div className={`p-3 rounded-xl border-2 inline-block ${
+                  MOVEMENT_TYPES.find(m => m.value === type)?.color || 'bg-slate-50 border-slate-200'
+                }`}>
+                  <p className="text-xs font-black">{MOVEMENT_TYPES.find(m => m.value === type)?.label || type}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Type non modifiable</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {MOVEMENT_TYPES.map(mt => (
+                    <button key={mt.value} type="button"
+                      onClick={() => handleTypeChange(mt.value)}
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${
+                        type === mt.value
+                          ? `${mt.color} border-current`
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}>
+                      <p className="text-xs font-black">{mt.label}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{mt.desc}</p>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
 
@@ -254,8 +314,6 @@ export function MovementDialog({
                   {type === 'deploiement' ? 'Site de déploiement' : 'Vers'}
                 </p>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-                  {/* Zone */}
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold text-slate-500">Zone *</Label>
                     <select
@@ -270,7 +328,6 @@ export function MovementDialog({
                     </select>
                   </div>
 
-                  {/* Bureau filtré */}
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold text-slate-500">Bureau</Label>
                     <select
@@ -289,7 +346,6 @@ export function MovementDialog({
                       ))}
                     </select>
                   </div>
-
                 </div>
               </div>
             )}
@@ -386,7 +442,6 @@ export function MovementDialog({
                 className="border-slate-200 text-sm resize-none"
               />
             </div>
-
           </div>
 
           <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
@@ -395,11 +450,17 @@ export function MovementDialog({
               Annuler
             </Button>
             <Button type="submit" disabled={loading}
-              className="bg-slate-900 hover:bg-slate-800 text-white font-black px-7 text-xs">
+              className={`font-black px-7 text-xs text-white ${
+                isEditing
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-slate-900 hover:bg-slate-800'
+              }`}>
               {loading
                 ? <Loader2 size={14} className="animate-spin mr-2" />
-                : <Save size={14} className="mr-2" />}
-              Enregistrer
+                : isEditing
+                  ? <Pencil size={14} className="mr-2" />
+                  : <Save size={14} className="mr-2" />}
+              {isEditing ? 'Mettre à jour' : 'Enregistrer'}
             </Button>
           </div>
         </form>

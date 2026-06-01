@@ -382,7 +382,38 @@ export async function createApp() {
     }
   });
 
-  // Mouvements GET
+  // Mouvements PUT — modifier note, référence, dates, destination
+  app.put('/api/movements/:id', authenticateToken, async (req: any, res) => {
+    const { id } = req.params;
+    const { note, reference, date_deploiement, date_retour_prevue, to_zone_id, to_station_id, new_status } = req.body;
+    try {
+      await query(`
+        UPDATE movements SET
+          note               = COALESCE($1, note),
+          reference          = COALESCE($2, reference),
+          date_deploiement   = $3,
+          date_retour_prevue = $4,
+          to_zone_id         = COALESCE($5, to_zone_id),
+          to_station_id      = $6,
+          new_status         = COALESCE($7, new_status)
+        WHERE id = $8
+      `, [
+        note ?? null,
+        reference ?? null,
+        date_deploiement ?? null,
+        date_retour_prevue ?? null,
+        to_zone_id ?? null,
+        to_station_id ?? null,
+        new_status ?? null,
+        id
+      ]);
+      logger.audit('MOVEMENT_UPDATED', req.user.id, { movementId: id, ip: req.ip });
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error('[PUT /api/movements]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
   app.get('/api/movements', authenticateToken, async (req: any, res) => {
     const { equipment_id } = req.query;
     try {

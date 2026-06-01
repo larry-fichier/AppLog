@@ -1,5 +1,6 @@
+import { apiFetch } from "@/lib/api";
 import { useState, useEffect } from "react";
-import { ArrowLeftRight, Search, Filter, Loader2 } from "lucide-react";
+import { ArrowLeftRight, Search, Filter, Loader2, Pencil } from "lucide-react";
 import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Truck } from "lucide-react";
 import { MovementDialog } from "./MovementDialog";
 import { Button } from "@/components/ui/button";
@@ -36,27 +37,28 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState("");
   const [filterType, setFilterType] = useState<string>("all");
-  const [isDialogOpen, setIsDialogOpen]   = useState(false);
-  const [selectedEquip, setSelectedEquip] = useState<any | null>(null);
-  const [equipment, setEquipment] = useState<any[]>([]);
+  const [isDialogOpen, setIsDialogOpen]         = useState(false);
+  const [selectedEquip, setSelectedEquip]         = useState<any | null>(null);
+  const [editingMovement, setEditingMovement]     = useState<any | null>(null);
+  const [equipment, setEquipment]                 = useState<any[]>([]);
 
   const canEdit = ["agent_logistique", "admin"].includes(activeRole || "");
 
   async function fetchMovements() {
-  setLoading(true);
-  try {
-    const res = await fetch('/api/movements', { credentials: "include" });
-    if (res.ok) setRows(await res.json());
-  } catch (e) { console.error(e); }
-  finally { setLoading(false); }
-}
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/movements');
+      if (res.ok) setRows(await res.json());
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
 
-async function fetchEquipment() {
-  try {
-    const res = await fetch('/api/equipment', { credentials: "include" });
-    if (res.ok) setEquipment(await res.json());
-  } catch (e) { console.error(e); }
-}
+  async function fetchEquipment() {
+    try {
+      const res = await apiFetch('/api/equipment');
+      if (res.ok) setEquipment(await res.json());
+    } catch (e) { console.error(e); }
+  }
 
   useEffect(() => {
     fetchMovements();
@@ -237,6 +239,22 @@ async function fetchEquipment() {
                         {new Date(mv.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </td>
+
+                    {/* Actions */}
+                    <td className="px-5 py-3.5 text-right">
+                      <Button
+                        variant="outline" size="sm"
+                        className="h-7 px-3 text-[10px] font-black gap-1 border-amber-200 text-amber-600 hover:bg-amber-50 hover:border-amber-400"
+                        onClick={() => {
+                          const equip = equipment.find(e => e.id === mv.equipment_id);
+                          setSelectedEquip(equip || { id: mv.equipment_id, name: mv.equipment_name || mv.equipment_id, zone_id: mv.to_zone_id, station_id: mv.to_station_id, status: mv.new_status });
+                          setEditingMovement(mv);
+                          setIsDialogOpen(true);
+                        }}
+                      >
+                        <Pencil size={10} />Modifier
+                      </Button>
+                    </td>
                   </tr>
                 );
               })}
@@ -315,10 +333,17 @@ async function fetchEquipment() {
         </div>
       )}
 
-      {selectedEquip && (
+      {selectedEquip && isDialogOpen && (
         <MovementDialog
-          open={!!selectedEquip}
-          onOpenChange={open => { if (!open) { setSelectedEquip(null); fetchMovements(); } }}
+          open={isDialogOpen}
+          onOpenChange={open => {
+            if (!open) {
+              setSelectedEquip(null);
+              setEditingMovement(null);
+              setIsDialogOpen(false);
+              fetchMovements();
+            }
+          }}
           equipmentId={selectedEquip.id}
           equipmentName={selectedEquip.name}
           currentZoneId={selectedEquip.zone_id}
@@ -327,6 +352,7 @@ async function fetchEquipment() {
           zones={zones}
           stations={stations}
           onSuccess={fetchMovements}
+          editingMovement={editingMovement}
         />
       )}
     </div>
