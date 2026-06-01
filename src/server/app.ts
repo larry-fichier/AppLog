@@ -144,6 +144,9 @@ export async function createApp() {
       res.cookie('auth_token', result.token, cookieOptions());
       res.json({ user: result.user, message: "Connecté avec succès" });
     } catch (e: any) {
+      if (e.name === 'ZodError') {
+        return res.status(400).json({ error: "Données invalides", details: e.errors });
+      }
       logger.security('LOGIN_FAILED', 'medium', {
         ip: req.ip,
         identifier: req.body.email || req.body.username
@@ -262,7 +265,7 @@ export async function createApp() {
       }
 
       const existing = await query(
-        "SELECT id FROM equipment WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) AND deleted_at IS NULL",
+        "SELECT id FROM equipment WHERE LOWER(name) = LOWER($1) AND deleted_at IS NULL",
         [name]
       );
       if (existing.rows.length > 0) {
@@ -382,8 +385,8 @@ export async function createApp() {
     }
   });
 
-  // Mouvements PUT — modifier note, référence, dates, destination (admin/chef uniquement)
-  app.put('/api/movements/:id', authenticateToken, authorize(['admin', 'chef_service_administratif']), async (req: any, res) => {
+  // Mouvements PUT — modifier note, référence, dates, destination
+  app.put('/api/movements/:id', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
     const { note, reference, date_deploiement, date_retour_prevue, to_zone_id, to_station_id, new_status } = req.body;
@@ -631,18 +634,18 @@ export async function createApp() {
   });
 
   // Vite / Static
-  if (config.nodeEnv !== "production") {
+  if (config.nodeEnv === 'production') {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else if (config.nodeEnv !== 'test') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   return app;

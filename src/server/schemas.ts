@@ -14,18 +14,19 @@ export const createEquipmentSchema = z.object({
 });
 
 // ✅ Validation pour création de mouvement
+// .nullish() = accepte undefined ET null (le frontend envoie null pour les champs vides)
 export const createMovementSchema = z.object({
-  equipment_id: z.string().uuid(),
-  type: z.enum(['entree', 'sortie', 'transfert', 'retour', 'ajustement', 'deploiement']),
-  from_zone_id: z.string().uuid().optional(),
-  from_station_id: z.string().uuid().optional(),
-  to_zone_id: z.string().uuid().optional(),
-  to_station_id: z.string().uuid().optional(),
-  note: z.string().max(500).optional(),
-  reference: z.string().max(100).optional(),
-  new_status: z.enum(['fonctionnel', 'en_reparation', 'hors_service']).optional(),
-  date_deploiement: z.string().optional(),
-  date_retour_prevue: z.string().optional(),
+  equipment_id:       z.string().uuid(),
+  type:               z.enum(['entree', 'sortie', 'transfert', 'retour', 'ajustement', 'deploiement']),
+  from_zone_id:       z.string().uuid().nullish(),
+  from_station_id:    z.string().uuid().nullish(),
+  to_zone_id:         z.string().uuid().nullish(),
+  to_station_id:      z.string().uuid().nullish(),
+  note:               z.string().max(500).nullish(),
+  reference:          z.string().max(100).nullish(),
+  new_status:         z.enum(['fonctionnel', 'en_reparation', 'hors_service']).nullish(),
+  date_deploiement:   z.string().nullish(),
+  date_retour_prevue: z.string().nullish(),
 });
 
 // ✅ Validation pour login
