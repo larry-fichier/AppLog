@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   Loader2, Plus, Trash2, Save, Users, Settings2, MapPin,
   ShieldCheck, Key, UserPlus, AlertCircle
@@ -131,7 +131,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   }
 
   // ── Créer un utilisateur (username uniquement) ───────────
-  async function handleCreateUser(e: React.FormEvent) {
+  async function handleCreateUser(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!newUser.username.trim() || !newUser.password.trim()) {
       toast.error("Nom d'utilisateur et mot de passe obligatoires");
@@ -255,7 +255,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   // ── Utilisateur courant ──────────────────────────────────
   const currentUserId = (() => {
-    try { return String(JSON.parse(localStorage.getItem("helios_user") || "{}").id || ""); }
+    try { return String(JSON.parse(sessionStorage.getItem("helios_user") || "{}").id || ""); }
     catch { return ""; }
   })();
 
@@ -572,7 +572,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                   {/* Rôle */}
                   <div className="space-y-3">
                     <Label className="text-sm font-semibold text-foreground">Rôle</Label>
-                    <Select value={newUser.role} onValueChange={(v: UserRole) => setNewUser(p => ({ ...p, role: v }))}>
+                    <Select value={newUser.role} onValueChange={(v) => { if (v) setNewUser(p => ({ ...p, role: v as UserRole })); }}>
                       <SelectTrigger className="w-full bg-white h-12 text-base border-border-custom">
                         <SelectValue placeholder="Sélectionnez un rôle" />
                       </SelectTrigger>
@@ -664,7 +664,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                           <td className="px-6 py-4 min-w-[220px]">
                             <Select
                               value={user.role}
-                              onValueChange={(v: UserRole) => handleUpdateUserRole(user.uid, v)}
+                              onValueChange={(v) => { if (v) handleUpdateUserRole(user.uid, v as UserRole); }}
                               disabled={user.uid === currentUserId}
                             >
                               <SelectTrigger className="w-full h-9 bg-white border-border-custom text-xs font-bold">

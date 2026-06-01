@@ -16,15 +16,16 @@ export const createEquipmentSchema = z.object({
 // ✅ Validation pour création de mouvement
 export const createMovementSchema = z.object({
   equipment_id: z.string().uuid(),
-  type: z.enum(['deployment', 'return', 'transfer', 'maintenance']).optional(),
+  type: z.enum(['entree', 'sortie', 'transfert', 'retour', 'ajustement', 'deploiement']),
   from_zone_id: z.string().uuid().optional(),
   from_station_id: z.string().uuid().optional(),
   to_zone_id: z.string().uuid().optional(),
   to_station_id: z.string().uuid().optional(),
   note: z.string().max(500).optional(),
+  reference: z.string().max(100).optional(),
   new_status: z.enum(['fonctionnel', 'en_reparation', 'hors_service']).optional(),
-  date_deploiement: z.string().datetime().optional(),
-  date_retour_prevue: z.string().datetime().optional(),
+  date_deploiement: z.string().optional(),
+  date_retour_prevue: z.string().optional(),
 });
 
 // ✅ Validation pour login

@@ -14,10 +14,10 @@ export async function connectDB() {
 
   if (connectionString) {
     try {
-      pool = new Pool({ 
+      pool = new Pool({
         connectionString,
-        ssl: connectionString.includes('supabase') || connectionString.includes('render') || connectionString.includes('google') 
-             ? { rejectUnauthorized: false } 
+        ssl: connectionString.includes('supabase') || connectionString.includes('render') || connectionString.includes('google')
+             ? { rejectUnauthorized: false }
              : false
       });
       await pool.query('SELECT 1');
@@ -25,10 +25,10 @@ export async function connectDB() {
       console.log('[DB] Connecté à PostgreSQL Réel.');
     } catch (err) {
       console.error('[DB] Échec de connexion PostgreSQL:', (err as Error).message);
-      setupMemoryDB();
+      throw err;
     }
   } else {
-    setupMemoryDB();
+    throw new Error('[DB] DATABASE_URL manquant');
   }
 }
 

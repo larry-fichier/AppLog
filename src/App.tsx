@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
-import { AppUser, UserRole } from "@/types";
 import { MovementsPage } from "@/components/MovementsPage";
 import { SupervisionDashboard } from "@/components/SupervisionDashboard";
 
@@ -57,7 +56,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
         // Mettre à jour l'utilisateur en localStorage
         const data = await refreshRes.json();
         if (data.user) {
-          localStorage.setItem("helios_user", JSON.stringify(data.user));
+          sessionStorage.setItem("helios_user", JSON.stringify(data.user));
         }
         // Résoudre les requêtes en attente
         pendingRequests.forEach(cb => cb(true));
@@ -68,7 +67,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
         // Refresh échoué → déconnexion propre
         pendingRequests.forEach(cb => cb(false));
         pendingRequests = [];
-        localStorage.removeItem("helios_user");
+        sessionStorage.removeItem("helios_user");
         window.dispatchEvent(new CustomEvent("helios:session-expired"));
         return response;
       }
@@ -196,7 +195,7 @@ export default function App() {
   // ── Init auth + config ─────────────────────────────────
   useEffect(() => {
     const init = async () => {
-      const storedUser = localStorage.getItem("helios_user");
+      const storedUser = sessionStorage.getItem("helios_user");
       if (storedUser) {
         try {
           const check = await fetch("/api/health", { credentials: "include" });
@@ -212,16 +211,16 @@ export default function App() {
               if (refreshRes.ok) {
                 const data = await refreshRes.json();
                 const updatedUser = data.user || JSON.parse(storedUser);
-                localStorage.setItem("helios_user", JSON.stringify(updatedUser));
+                sessionStorage.setItem("helios_user", JSON.stringify(updatedUser));
                 setUser(updatedUser);
               } else {
-                localStorage.removeItem("helios_user");
+                sessionStorage.removeItem("helios_user");
               }
             } catch {
-              localStorage.removeItem("helios_user");
+              sessionStorage.removeItem("helios_user");
             }
           } else {
-            localStorage.removeItem("helios_user");
+            sessionStorage.removeItem("helios_user");
           }
         } catch {
           // Erreur réseau — garder l'utilisateur connecté localement
@@ -254,7 +253,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try { await fetch("/api/auth/logout", { method: "POST", credentials: "include" }); } catch {}
-    localStorage.removeItem("helios_user");
+    sessionStorage.removeItem("helios_user");
     setUser(null);
     setIdentifier("");
     setPassword("");
@@ -269,7 +268,7 @@ export default function App() {
   const isLocked = lockUntil !== null && Date.now() < lockUntil;
   const remainingLockSeconds = isLocked ? Math.ceil((lockUntil! - Date.now()) / 1000) : 0;
 
-  const handleAuthAction = async (e: React.FormEvent) => {
+  const handleAuthAction = async (e: { preventDefault(): void }) => {
     e.preventDefault();
 
     if (isLocked) {
@@ -309,7 +308,7 @@ export default function App() {
       setLockUntil(null);
 
       const data = await res.json();
-      localStorage.setItem("helios_user", JSON.stringify(data.user));
+      sessionStorage.setItem("helios_user", JSON.stringify(data.user));
       setUser(data.user);
       setPassword("");
       toast.success("Bienvenue, " + getDisplayName(data.user));

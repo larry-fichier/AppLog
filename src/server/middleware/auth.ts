@@ -25,7 +25,7 @@ export const authenticateToken = async (req: any, res: any, next: any) => {
 
       // Vérification en base (UUID)
       const result = await query(
-        "SELECT id, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL", 
+        "SELECT id, username, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL",
         [decoded.id]
       );
       

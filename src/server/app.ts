@@ -71,8 +71,6 @@ export async function createApp() {
       // Accepter les requêtes sans origin (mobile, curl, même domaine)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      // En production sur réseau local, accepter toutes les origines du même serveur
-      if (config.nodeEnv === 'production') return callback(null, true);
       callback(new Error('CORS non autorisé'));
     },
     credentials: true,
@@ -120,9 +118,9 @@ export async function createApp() {
   function cookieOptions() {
     return {
       httpOnly: true,
-      secure: false,        // false car HTTP derrière Nginx sans SSL
+      secure: config.nodeEnv === 'production',
       sameSite: 'lax' as const,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
+      // Pas de maxAge → cookie de session : supprimé dès que le navigateur est fermé
     };
   }
 
@@ -159,7 +157,7 @@ export async function createApp() {
     res.clearCookie("auth_token", {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure: config.nodeEnv === 'production',
     });
     res.json({ success: true });
   });
@@ -319,6 +317,7 @@ export async function createApp() {
   app.put("/api/equipment/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
+      if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
       const updateSchema = createEquipmentSchema.partial();
       const validated = updateSchema.parse(req.body);
       const { category, category_id, status, zone_id, station_id, details } = validated as any;
@@ -342,11 +341,11 @@ export async function createApp() {
           name = COALESCE($1, name),
           category_id = COALESCE($2, category_id),
           status = COALESCE($3, status),
-          zone_id = $4,
-          station_id = $5,
+          zone_id = COALESCE($4, zone_id),
+          station_id = COALESCE($5, station_id),
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $6 AND deleted_at IS NULL
-      `, [name, finalCategoryId, status, zone_id || null, station_id || null, id]);
+      `, [name || null, finalCategoryId || null, status || null, zone_id || null, station_id || null, id]);
 
       if (details && Object.keys(details).length > 0) {
         await query("DELETE FROM equipment_details WHERE equipment_id = $1", [id]);
@@ -374,6 +373,7 @@ export async function createApp() {
   // Equipment - DELETE
   app.delete("/api/equipment/:id", authenticateToken, authorize(['admin']), async (req: any, res) => {
     try {
+      if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
       await query("UPDATE equipment SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", [req.params.id]);
       logger.audit('EQUIPMENT_DELETED', req.user.id, { equipmentId: req.params.id, ip: req.ip });
       res.json({ success: true });
@@ -382,19 +382,20 @@ export async function createApp() {
     }
   });
 
-  // Mouvements PUT — modifier note, référence, dates, destination
-  app.put('/api/movements/:id', authenticateToken, async (req: any, res) => {
+  // Mouvements PUT — modifier note, référence, dates, destination (admin/chef uniquement)
+  app.put('/api/movements/:id', authenticateToken, authorize(['admin', 'chef_service_administratif']), async (req: any, res) => {
     const { id } = req.params;
+    if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
     const { note, reference, date_deploiement, date_retour_prevue, to_zone_id, to_station_id, new_status } = req.body;
     try {
       await query(`
         UPDATE movements SET
           note               = COALESCE($1, note),
           reference          = COALESCE($2, reference),
-          date_deploiement   = $3,
-          date_retour_prevue = $4,
+          date_deploiement   = COALESCE($3, date_deploiement),
+          date_retour_prevue = COALESCE($4, date_retour_prevue),
           to_zone_id         = COALESCE($5, to_zone_id),
-          to_station_id      = $6,
+          to_station_id      = COALESCE($6, to_station_id),
           new_status         = COALESCE($7, new_status)
         WHERE id = $8
       `, [
@@ -416,6 +417,9 @@ export async function createApp() {
   });
   app.get('/api/movements', authenticateToken, async (req: any, res) => {
     const { equipment_id } = req.query;
+    if (equipment_id && !isUUID(String(equipment_id))) {
+      return res.status(400).json({ error: 'equipment_id invalide' });
+    }
     try {
       const sql = `
         SELECT m.*,
@@ -446,16 +450,20 @@ export async function createApp() {
   // Mouvements POST
   app.post('/api/movements', authenticateToken, async (req: any, res) => {
     const userId = req.user.id;
+
+    let validated: any;
+    try {
+      validated = createMovementSchema.parse(req.body);
+    } catch (zodErr: any) {
+      return res.status(400).json({ error: 'Validation échouée', details: zodErr.errors });
+    }
+
     const {
       equipment_id, type, note, reference,
       from_zone_id, from_station_id,
       to_zone_id, to_station_id,
       new_status, date_deploiement, date_retour_prevue,
-    } = req.body;
-
-    const ALLOWED = ['entree', 'sortie', 'transfert', 'retour', 'ajustement', 'deploiement'];
-    if (!ALLOWED.includes(type)) return res.status(400).json({ error: `Type invalide: ${type}` });
-    if (!equipment_id)           return res.status(400).json({ error: 'equipment_id obligatoire' });
+    } = validated;
 
     try {
       const { rows: [eq] } = await query(
@@ -505,7 +513,7 @@ export async function createApp() {
       );
       res.status(201).json(mv);
 
-      if (['sortie', 'hors_service'].includes(type) || new_status === 'hors_service') {
+      if (type === 'sortie' || new_status === 'hors_service') {
         (req.app as any).broadcastEvent?.({
           type: 'equipment_critical',
           payload: { equipment_id, movement_type: type, new_status: new_status || upd.status || eq.status }
@@ -521,6 +529,7 @@ export async function createApp() {
   app.get("/api/equipment/:id/history", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
+      if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
       const { rows } = await query(`
         SELECT m.id, m.type, m.note, m.reference,
           m.previous_status, m.new_status,
@@ -544,8 +553,12 @@ export async function createApp() {
   });
 
   // SSE notifications
+  const SSE_MAX_CLIENTS = 100;
   const sseClients = new Set<any>();
   app.get("/api/events", authenticateToken, (req: any, res) => {
+    if (sseClients.size >= SSE_MAX_CLIENTS) {
+      return res.status(503).json({ error: 'Trop de connexions actives, réessayez plus tard' });
+    }
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -554,13 +567,19 @@ export async function createApp() {
 
     const client = { res, userId: req.user.id, role: req.user.role };
     sseClients.add(client);
-    const keepAlive = setInterval(() => res.write(": ping\n\n"), 25000);
+    const keepAlive = setInterval(() => {
+      try { res.write(": ping\n\n"); }
+      catch { clearInterval(keepAlive); sseClients.delete(client); }
+    }, 25000);
     req.on("close", () => { clearInterval(keepAlive); sseClients.delete(client); });
   });
 
   (app as any).broadcastEvent = (event: { type: string; payload: any }) => {
     const data = `data: ${JSON.stringify(event)}\n\n`;
-    sseClients.forEach((client: any) => { try { client.res.write(data); } catch {} });
+    sseClients.forEach((client: any) => {
+      try { client.res.write(data); }
+      catch { sseClients.delete(client); }
+    });
   };
 
   // Config

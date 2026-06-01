@@ -4,14 +4,14 @@
  * but redirects logic to our local PostgreSQL API.
  */
 
-import { apiFetch, getAuthToken, getUserData, removeAuthToken, removeUserData } from "./api";
+import { apiFetch, getUserData, removeUserData } from "./api";
 
 export const db: any = {}; // Firestore is bypassed
 export const auth: any = {
   currentUser: getUserData(),
 };
 
-export const onAuthStateChanged = (authObj: any, callback: (user: any) => void) => {
+export const onAuthStateChanged = (_authObj: any, callback: (user: any) => void) => {
   const user = getUserData();
   // Simulate async behavior of Firebase
   setTimeout(() => {
@@ -22,7 +22,7 @@ export const onAuthStateChanged = (authObj: any, callback: (user: any) => void) 
   return () => {};
 };
 
-export const signInWithEmailAndPassword = async (authObj: any, email: string, pass: string) => {
+export const signInWithEmailAndPassword = async (_authObj: any, email: string, pass: string) => {
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -37,8 +37,7 @@ export const signInWithEmailAndPassword = async (authObj: any, email: string, pa
 
   const data = await response.json();
   
-  // ✅ Stocker SEULEMENT les infos utilisateur (le token est dans le cookie httpOnly)
-  localStorage.setItem("helios_user", JSON.stringify(data.user));
+  sessionStorage.setItem("helios_user", JSON.stringify(data.user));
   
   return { user: { ...data.user, uid: String(data.user.id) } };
 };
@@ -62,8 +61,8 @@ export const signOut = async () => {
 };
 
 // Dummy exports for types and other used functions
-export const doc = (db: any, collection: string, id: string) => ({ collection, id });
-export const collection = (db: any, name: string) => name;
+export const doc = (_db: any, collection: string, id: string) => ({ collection, id });
+export const collection = (_db: any, name: string) => name;
 export const getDoc = async (docRef: any) => {
   // If it's config/global, fetch from /api/config
   if (docRef.collection === "config" && docRef.id === "global") {
@@ -106,7 +105,7 @@ export const addDoc = async (collection: string, data: any) => {
   }
 };
 
-export const onSnapshot = (query: any, callback: (snap: any) => void) => {
+export const onSnapshot = (_query: any, _callback: (snap: any) => void) => {
   // We can't do real-time without WebSockets or long polling easily here,
   // so we'll do an initial fetch and suggest polling.
   return () => {};
@@ -116,10 +115,11 @@ export const signInWithPopup = async () => {
   throw new Error("Google Login a été supprimé. Utilisez Email/Mot de passe.");
 };
 
-export const createUserWithEmailAndPassword = async (authObj: any, email: string, pass: string) => {
+export const createUserWithEmailAndPassword = async (_authObj: any, email: string, pass: string) => {
   const response = await fetch("/api/admin/users", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("helios_token")}` },
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ email, password: pass, username: email.split('@')[0], displayName: email.split('@')[0] })
   });
 
@@ -131,7 +131,7 @@ export const createUserWithEmailAndPassword = async (authObj: any, email: string
   return await response.json();
 };
 
-export const query = (colRef: any, ...constraints: any[]) => colRef;
+export const query = (colRef: any, ..._constraints: any[]) => colRef;
 export const orderBy = (field: string, direction: string = "asc") => ({ field, direction });
 export const where = (field: string, op: string, value: any) => ({ field, op, value });
 export const limit = (n: number) => ({ limit: n });

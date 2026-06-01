@@ -1,7 +1,7 @@
 import { connectDB, initSchema, query } from './src/server/db.ts';
 import { createApp } from './src/server/app.ts';
 import { config } from './src/server/config.ts';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 async function startServer() {
   console.log("🚀 Lancement du serveur Helios (Mode SOLID)...");
@@ -12,9 +12,14 @@ async function startServer() {
     await initSchema();
 
     // 2. Seeding (Données Vitales)
-    const adminCheck = await query("SELECT id FROM users WHERE email = $1", [config.adminEmail]);
+    const adminCheck = await query("SELECT id FROM users WHERE username = 'admin'");
     if (adminCheck.rows.length === 0) {
-      const hashedPassword = await bcrypt.hash("admin123", 10);
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (!adminPassword) {
+        console.error('❌ ERREUR: ADMIN_PASSWORD manquant dans les variables d\'environnement!');
+        process.exit(1);
+      }
+      const hashedPassword = await bcrypt.hash(adminPassword, 12);
       await query(`
         INSERT INTO users (username, email, password_hash, display_name, role)
         VALUES ($1, $2, $3, $4, $5)
