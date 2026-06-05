@@ -79,14 +79,14 @@ async function startServer() {
     ];
     for (const cat of seedCategories) {
       try {
-        await query(
-          `INSERT INTO categories (code, label)
-           SELECT $1, $2
-           WHERE NOT EXISTS (SELECT 1 FROM categories WHERE code = $1)`,
-          [cat.code, cat.label]
-        );
+        const exists = await query('SELECT 1 FROM categories WHERE code = $1', [cat.code]);
+        if (exists.rows.length === 0) {
+          await query(
+            'INSERT INTO categories (code, label) VALUES ($1, $2)',
+            [cat.code, cat.label]
+          );
+        }
       } catch (e: any) {
-        // Ignore toute violation de contrainte (clé dupliquée) — catégorie déjà présente
         if (e.code !== '23505') throw e;
       }
     }
