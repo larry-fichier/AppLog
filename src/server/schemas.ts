@@ -2,15 +2,18 @@ import { z } from 'zod';
 
 // ✅ Validation pour création d'équipement
 export const createEquipmentSchema = z.object({
-  name: z.string().max(200).optional(),
-  category: z.string().max(100).optional(),
-  category_id: z.string().uuid().optional(),
-  zone: z.string().optional(),
-  zone_id: z.string().uuid().optional(),
-  station: z.string().optional(),
-  station_id: z.string().uuid().optional(),
+  name:        z.string().max(200).optional(),
+  category:    z.string().max(100).optional(),
+  category_id: z.string().optional(),
+  zone:        z.string().optional(),
+  zone_id:     z.string().optional(),
+  station:     z.string().optional(),
+  station_id:  z.string().optional(),
   status: z.enum(['fonctionnel', 'en_reparation', 'hors_service']).default('fonctionnel'),
-  details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.string(), z.any())])).optional()
+  details: z.record(
+    z.string(),
+    z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.string(), z.any())])
+  ).optional(),
 });
 
 // ✅ Validation pour création de mouvement

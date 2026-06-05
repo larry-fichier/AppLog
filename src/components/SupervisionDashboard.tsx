@@ -362,14 +362,14 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       const [eqRes, mvRes, usersRes, onlineRes] = await Promise.all([
         apiFetch("/api/equipment"),
         apiFetch("/api/movements"),
-        apiFetch("/api/admin/users"),
-        apiFetch("/api/admin/users/online"),
+        apiFetch("/api/admin/users").catch(() => null),
+        apiFetch("/api/admin/users/online").catch(() => null),
       ]);
       if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
       if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
       else setMovements([]);
-      if (usersRes.ok) setAllUsers(await usersRes.json());
-      if (onlineRes.ok) setOnlineUsers(await onlineRes.json());
+      if (usersRes?.ok) setAllUsers(await usersRes.json());
+      if (onlineRes?.ok) setOnlineUsers(await onlineRes.json());
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }

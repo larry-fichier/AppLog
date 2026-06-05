@@ -4,14 +4,19 @@ import {
   Loader2, Wrench, CheckCircle2, XCircle,
   FileText, Database, ShieldAlert,
   Archive, Box, Thermometer, Truck, MapPin,
-  ArrowLeftRight
+  ArrowLeftRight, AlertTriangle, PackageMinus, Package
 } from "lucide-react";
 import { Equipment, GlobalSettings } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EquipmentDialog } from "./EquipmentDialog";
 import { MovementDialog } from "./MovementDialog";
 import { apiFetch } from "@/lib/api";
+import { toast } from "sonner";
 
 // ─── Icône dynamique selon le label ───────────────────────
 function getCategoryIcon(label: string = "", size = 16) {
@@ -69,9 +74,51 @@ export function EquipmentDashboard({
   const [zones, setZones]           = useState<{ id: string; label: string }[]>([]);
   const [stations, setStations]     = useState<{ id: string; label: string; zoneId: string }[]>([]);
 
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [currentPage, setCurrentPage]   = useState(1);
+  const [statusFilter, setStatusFilter]     = useState<string>("all");
+  const [currentPage, setCurrentPage]       = useState(1);
   const PAGE_SIZE = 10;
+
+  const [stockSortieItem, setStockSortieItem]       = useState<any | null>(null);
+  const [stockSortieQty, setStockSortieQty]         = useState("1");
+  const [stockSortieZoneId, setStockSortieZoneId]   = useState("");
+  const [stockSortieLoading, setStockSortieLoading] = useState(false);
+
+  function isExploitationItem(item: any): boolean {
+    return /exploitation|mat.riel.d/i.test(item.category_label || "");
+  }
+
+  async function handleStockSortie() {
+    if (!stockSortieItem) return;
+    const qty = parseInt(stockSortieQty, 10);
+    if (isNaN(qty) || qty <= 0) { toast.error("Quantité invalide"); return; }
+    if (!stockSortieZoneId) { toast.error("Veuillez sélectionner une zone / service de destination"); return; }
+    setStockSortieLoading(true);
+    const zoneName = zones.find(z => z.id === stockSortieZoneId)?.label || "";
+    try {
+      const res = await apiFetch(`/api/equipment/${stockSortieItem.id}/stock-sortie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantite: qty, zone_id: stockSortieZoneId, zone_name: zoneName }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`Stock mis à jour : ${data.new_stock} ${data.unite} restant(s)`);
+      if (data.alerte) {
+        toast.warning(
+          `⚠️ Alerte stock — "${stockSortieItem.name}" : ${data.new_stock} ${data.unite} (seuil : ${data.seuil_alerte})`,
+          { duration: 8000 }
+        );
+      }
+      setStockSortieItem(null);
+      setStockSortieQty("1");
+      setStockSortieZoneId("");
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setStockSortieLoading(false);
+    }
+  }
 
   const canSeeArmement = ["admin", "chef_service_administratif", "csph"].includes(activeRole);
 
@@ -215,6 +262,36 @@ export function EquipmentDashboard({
         : d.date_entree ? `Entrée : ${new Date(d.date_entree).toLocaleDateString("fr-FR")}` : null;
     } else if (l.includes("clim") || l.includes("climatiseur")) {
       specificInfo = d.position ? `📍 ${d.position}` : null;
+    } else if (l.includes("exploitation") || l.includes("mat") && l.includes("riel")) {
+      const stock  = parseInt(d.quantite_stock || "0", 10);
+      const seuil  = parseInt(d.seuil_alerte   || "0", 10);
+      const low    = seuil > 0 && stock <= seuil;
+      const empty  = stock === 0;
+      specificInfo = `Stock : ${stock} ${d.unite || "unité(s)"}${low ? " ⚠️" : ""}`;
+      return (
+        <TableCell className="px-6 py-4">
+          <div className="space-y-1">
+            {d.type_consommable && (
+              <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                {d.type_consommable === "Autre" && d.type_consommable_autre ? d.type_consommable_autre : d.type_consommable}
+              </p>
+            )}
+            {d.designation && (
+              <p className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">{d.designation}</p>
+            )}
+            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black border ${
+              empty ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:border-red-800" :
+              low   ? "bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950 dark:border-amber-800" :
+                      "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950 dark:border-emerald-800"
+            }`}>
+              {empty || low ? <AlertTriangle size={10} /> : <Package size={10} />}
+              {stock} {d.unite || "unité(s)"}
+              {low && !empty && <span className="ml-1 opacity-70">/ seuil {seuil}</span>}
+              {empty && <span className="ml-1">— épuisé</span>}
+            </div>
+          </div>
+        </TableCell>
+      );
     } else if (l.includes("informatique") || l.includes("it") || l.includes("ordinateur") || l.includes("electronique")) {
       specificInfo = d.date_mise_utilisation
         ? `Service : ${new Date(d.date_mise_utilisation).toLocaleDateString("fr-FR")}` : null;
@@ -553,33 +630,50 @@ export function EquipmentDashboard({
                           </div>
                         </TableCell>
 
-                        {/* Statut */}
+                        {/* Statut — masqué pour exploitation */}
                         <TableCell className="px-6 py-4">
-                          <div className={`inline-flex items-center px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${sc.color}`}>
-                            {sc.icon}{sc.label}
-                          </div>
+                          {!isExploitationItem(item) && (
+                            <div className={`inline-flex items-center px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider border ${sc.color}`}>
+                              {sc.icon}{sc.label}
+                            </div>
+                          )}
                         </TableCell>
 
                         {/* Actions */}
                         <TableCell className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {canEdit && (
-                              <Button
-                                variant="outline" size="sm"
-                                className={`h-8 px-3 text-[10px] font-black tracking-wider uppercase transition-all ${
-                                  isSelected
-                                    ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600"
-                                    : "border-orange-200 dark:border-orange-900 text-orange-500 hover:border-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/30"
-                                }`}
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  if (isSelected) setMovementTarget(null);
-                                  else setMovementTarget(item);
-                                }}
-                              >
-                                <ArrowLeftRight size={11} className="mr-1" />
-                                {isSelected ? "Sélectionné" : "Mouvement"}
-                              </Button>
+                              isExploitationItem(item) ? (
+                                <Button
+                                  variant="outline" size="sm"
+                                  className="h-8 px-3 text-[10px] font-black tracking-wider uppercase border-red-200 dark:border-red-900 text-red-500 hover:border-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setStockSortieItem(item);
+                                    setStockSortieQty("1");
+                                  }}
+                                >
+                                  <PackageMinus size={11} className="mr-1" />
+                                  Sortie stock
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline" size="sm"
+                                  className={`h-8 px-3 text-[10px] font-black tracking-wider uppercase transition-all ${
+                                    isSelected
+                                      ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600"
+                                      : "border-orange-200 dark:border-orange-900 text-orange-500 hover:border-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+                                  }`}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    if (isSelected) setMovementTarget(null);
+                                    else setMovementTarget(item);
+                                  }}
+                                >
+                                  <ArrowLeftRight size={11} className="mr-1" />
+                                  {isSelected ? "Sélectionné" : "Mouvement"}
+                                </Button>
+                              )
                             )}
                             <Button
                               variant="outline" size="sm"
@@ -673,6 +767,97 @@ export function EquipmentDashboard({
           onSuccess={fetchData}
         />
       )}
+
+      {/* ── Dialog sortie de stock ── */}
+      <Dialog open={!!stockSortieItem} onOpenChange={open => { if (!open) { setStockSortieItem(null); setStockSortieZoneId(""); setStockSortieQty("1"); } }}>
+        <DialogContent className="sm:max-w-[400px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-red-700 to-red-600 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <PackageMinus size={18} /> Sortie de stock
+              </DialogTitle>
+              <DialogDescription className="text-red-200 text-xs mt-0.5 font-medium">
+                {stockSortieItem?.name}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="px-6 py-5 space-y-5">
+            {/* Stock actuel */}
+            {stockSortieItem && (() => {
+              const d = stockSortieItem.details || {};
+              const stock = parseInt(d.quantite_stock || "0", 10);
+              const seuil = parseInt(d.seuil_alerte   || "0", 10);
+              const low   = seuil > 0 && stock <= seuil;
+              return (
+                <div className={`flex items-center justify-between px-4 py-3 rounded-xl border ${
+                  low ? "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+                      : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                }`}>
+                  <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Stock actuel</span>
+                  <span className={`text-lg font-black flex items-center gap-1.5 ${low ? "text-amber-600" : "text-slate-800 dark:text-slate-200"}`}>
+                    {low && <AlertTriangle size={16} />}
+                    {stock} <span className="text-sm font-bold">{d.unite || "unité(s)"}</span>
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Zone / Service de destination */}
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Zone / Service de destination <span className="text-red-400">*</span>
+              </Label>
+              <Select value={stockSortieZoneId} onValueChange={v => setStockSortieZoneId(v ?? "")}>
+                <SelectTrigger className="h-10 text-sm border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  <SelectValue placeholder="Sélectionner une zone..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {zones.map(z => (
+                    <SelectItem key={z.id} value={z.id}>{z.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Quantité à retirer */}
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Quantité à retirer <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                value={stockSortieQty}
+                onChange={e => setStockSortieQty(e.target.value)}
+                className="h-11 text-lg font-black text-center border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                onKeyDown={e => { if (e.key === "Enter") handleStockSortie(); }}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1 dark:border-slate-600 dark:text-slate-300"
+              onClick={() => setStockSortieItem(null)}
+              disabled={stockSortieLoading}
+            >
+              Annuler
+            </Button>
+            <Button
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black"
+              onClick={handleStockSortie}
+              disabled={stockSortieLoading}
+            >
+              {stockSortieLoading
+                ? <Loader2 size={15} className="animate-spin mr-2" />
+                : <PackageMinus size={15} className="mr-2" />}
+              Confirmer la sortie
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

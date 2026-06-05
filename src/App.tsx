@@ -12,7 +12,7 @@ import {
   ChevronDown, ChevronRight, Box,
   Car, Utensils, Laptop, Zap, Thermometer,
   Truck, Archive, ShieldAlert,
-  Bell, Moon, Sun,
+  Bell, Moon, Sun, Package,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
@@ -89,9 +89,10 @@ function getCatIcon(label: string = "", size = 16) {
   if (l.includes("rame") || l.includes("véhicule") || l.includes("vehicule") || l.includes("automobile")) return <Car size={size} />;
   if (l.includes("cuisine") || l.includes("frigo") || l.includes("réfrigér"))  return <Utensils size={size} />;
   if (l.includes("informatique") || l.includes("it") || l.includes("ordinateur") || l.includes("electronique")) return <Laptop size={size} />;
-  if (l.includes("groupe") || l.includes("générateur") || l.includes("generateur")) return <Zap size={size} />;
+  if (l.includes("énergie") || l.includes("energie") || l.includes("groupe") || l.includes("générateur") || l.includes("generateur")) return <Zap size={size} />;
   if (l.includes("clim") || l.includes("climatiseur"))  return <Thermometer size={size} />;
   if (l.includes("transport") || l.includes("camion"))  return <Truck size={size} />;
+  if (l.includes("exploitation") || l.includes("matériel") || l.includes("materiel")) return <Package size={size} />;
   return <Box size={size} />;
 }
 

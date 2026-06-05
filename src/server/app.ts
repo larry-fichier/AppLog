@@ -528,6 +528,67 @@ export async function createApp() {
     }
   });
 
+  // Sortie de stock — Matériel d'exploitation
+  app.post('/api/equipment/:id/stock-sortie', authenticateToken, async (req: any, res) => {
+    const { id } = req.params;
+    const { quantite, note, zone_id, zone_name } = req.body;
+    const qty = Number(quantite);
+    if (!quantite || isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'Quantité invalide (doit être > 0)' });
+    }
+    if (!zone_id) {
+      return res.status(400).json({ error: 'Zone / service de destination obligatoire' });
+    }
+    try {
+      const { rows: [eq] } = await query(
+        `SELECT e.id, e.name, e.status, e.zone_id, e.station_id, c.label as category_label
+         FROM equipment e LEFT JOIN categories c ON e.category_id = c.id
+         WHERE e.id = $1 AND e.deleted_at IS NULL`, [id]
+      );
+      if (!eq) return res.status(404).json({ error: 'Équipement introuvable' });
+
+      const { rows: detailRows } = await query(
+        `SELECT field_key, field_value FROM equipment_details
+         WHERE equipment_id = $1 AND field_key IN ('quantite_stock','seuil_alerte','unite')`, [id]
+      );
+      const det: Record<string, string> = Object.fromEntries(detailRows.map((r: any) => [r.field_key, r.field_value]));
+
+      const currentStock = parseInt(det.quantite_stock || '0', 10);
+      const seuilAlerte  = parseInt(det.seuil_alerte  || '0', 10);
+      const unite        = det.unite || 'unité(s)';
+      const newStock     = Math.max(0, currentStock - qty);
+
+      // Mettre à jour le stock (delete + insert pour éviter les doublons)
+      await query(`DELETE FROM equipment_details WHERE equipment_id = $1 AND field_key = 'quantite_stock'`, [id]);
+      await query(`INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'quantite_stock', $2)`, [id, String(newStock)]);
+      await query(`UPDATE equipment SET updated_at = NOW() WHERE id = $1`, [id]);
+
+      // Enregistrer le mouvement avec la zone de destination
+      const destLabel = zone_name || zone_id;
+      await query(
+        `INSERT INTO movements (equipment_id, type, performed_by, performed_by_name, note, to_zone_id, previous_status, new_status)
+         VALUES ($1, 'sortie', $2, $3, $4, $5, $6, $6)`,
+        [id, req.user.id, req.user.display_name || req.user.username || 'Inconnu',
+         `Sortie stock : -${qty} ${unite} → ${destLabel}${note ? ' — ' + note : ''}`,
+         isUUID(zone_id) ? zone_id : null,
+         eq.status]
+      );
+
+      const alerte = seuilAlerte > 0 && newStock <= seuilAlerte;
+      if (alerte) {
+        (req.app as any).broadcastEvent?.({
+          type: 'stock_alerte',
+          payload: { equipment_id: id, name: eq.name, new_stock: newStock, seuil: seuilAlerte, unite }
+        });
+      }
+
+      res.json({ new_stock: newStock, seuil_alerte: seuilAlerte, unite, alerte });
+    } catch (e: any) {
+      console.error('[POST /api/equipment/:id/stock-sortie]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Historique équipement
   app.get("/api/equipment/:id/history", authenticateToken, async (req: any, res) => {
     try {

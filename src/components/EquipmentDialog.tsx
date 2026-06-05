@@ -105,6 +105,7 @@ interface DynamicField {
   required?: boolean;
   options?: string[];
   section?: string;
+  showOtherInput?: boolean;
 }
 
 function getDynamicFields(categoryLabel: string): DynamicField[] {
@@ -158,12 +159,15 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
       l.includes("electro") || l.includes("énergie") || l.includes("energie") || l.includes("ups") || l.includes("onduleur")) {
     return [
       { key: "numero_serie",           label: "Numéro de Série",                type: "text",     placeholder: "Ex: UPS-12345", isSerial: true, required: true, section: "Identification" },
-      { key: "marque",                 label: "Marque",                           type: "text",     placeholder: "Ex: Eaton, Schneider, Caterpillar...", required: true, section: "Caractéristiques" },
+      { key: "type_equipement",        label: "Type d'équipement",              type: "select",   placeholder: "", required: true, section: "Caractéristiques",
+        options: ["UPS", "PDB", "Générateur", "Stabilisateur système", "Stabilisateur delta", "Régulateur de tension", "Autre"],
+        showOtherInput: true },
+      { key: "marque",                 label: "Marque",                          type: "text",     placeholder: "Ex: Eaton, Schneider, Caterpillar..." },
       { key: "modele",                 label: "Modèle / Référence",              type: "text",     placeholder: "Ex: EXRT10KTFW" },
       { key: "puissance",              label: "Puissance / Capacité",            type: "text",     placeholder: "Ex: 10 kVA, 20 kVA" },
       { key: "date_entree",            label: "Date d'entrée",                   type: "date",     placeholder: "", section: "Dates" },
       { key: "date_mise_service",      label: "Date de mise en service",         type: "date",     placeholder: "" },
-      { key: "date_derniere_revision", label: "Dernière révision / maintenance",  type: "date",     placeholder: "" },
+      { key: "date_derniere_revision", label: "Dernière révision / maintenance",  type: "date",    placeholder: "" },
       { key: "observation",            label: "Observation",                      type: "textarea", placeholder: "État, remarques...", fullWidth: true, section: "Notes" },
     ];
   }
@@ -180,6 +184,21 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
       { key: "date_deploiement",       label: "Date de déploiement",             type: "date",     placeholder: "" },
       { key: "date_derniere_revision", label: "Dernière révision / maintenance",  type: "date",    placeholder: "" },
       { key: "observation",            label: "Observation",                      type: "textarea", placeholder: "Remarques...", fullWidth: true, section: "Notes" },
+    ];
+  }
+
+  if (l.includes("exploitation") || l.includes("matériel d") || l.includes("materiel d")) {
+    return [
+      { key: "type_consommable",   label: "Type de consommable",      type: "select",   placeholder: "", required: true, section: "Identification",
+        options: ["Toner d'imprimante", "Registre d'exploitation", "Rame de papier", "Autre"],
+        showOtherInput: true },
+      { key: "designation",        label: "Désignation",               type: "text",     placeholder: "Ex: Toner HP LaserJet 26A, Registre journalier...", required: true, fullWidth: true },
+      { key: "quantite_stock",     label: "Quantité en stock",         type: "number",   placeholder: "Ex: 10", required: true, section: "Stock" },
+      { key: "unite",              label: "Unité",                     type: "select",   placeholder: "", options: ["Pièce(s)", "Rame(s)", "Boîte(s)", "Carton(s)", "Paquet(s)"] },
+      { key: "seuil_alerte",       label: "Seuil d'alerte (min)",      type: "number",   placeholder: "Ex: 2" },
+      { key: "date_entree",        label: "Date d'entrée en stock",    type: "date",     placeholder: "", section: "Dates" },
+      { key: "fournisseur",        label: "Fournisseur",               type: "text",     placeholder: "Ex: Bureau Vallée, Sodicaf..." },
+      { key: "observation",        label: "Observation",               type: "textarea", placeholder: "Remarques, référence commande...", fullWidth: true, section: "Notes" },
     ];
   }
 
@@ -432,9 +451,10 @@ export function EquipmentDialog({
 
   const isToolCategory     = /outillage|outil|outils/.test(categoryLabelForFields.toLowerCase());
   const isToolCable        = isToolCategory && /cable|câble|cordon|fil/i.test(String(details.designation || details.modele || details.observation || ""));
-  const isCuisineCategory  = /cuisine|ameublement|mobilier|meuble|frigo|réfrigér|refriger/.test(categoryLabelForFields.toLowerCase());
-  const isGroupeCategory   = /groupe|générateur|generateur|electro|énergie|energie|ups|onduleur/.test(categoryLabelForFields.toLowerCase());
-  const isArmementCategory = /armement|arme|armes/.test(categoryLabelForFields.toLowerCase());
+  const isCuisineCategory      = /cuisine|ameublement|mobilier|meuble|frigo|réfrigér|refriger/.test(categoryLabelForFields.toLowerCase());
+  const isExploitationCategory = /exploitation|matériel d|materiel d/.test(categoryLabelForFields.toLowerCase());
+  const isGroupeCategory       = /groupe|générateur|generateur|electro|énergie|energie|ups|onduleur/.test(categoryLabelForFields.toLowerCase());
+  const isArmementCategory     = /armement|arme|armes/.test(categoryLabelForFields.toLowerCase());
 
   useEffect(() => {
     if (!open) return;
@@ -575,7 +595,10 @@ export function EquipmentDialog({
         onOpenChange(false);
       } else {
         const err = await res.json();
-        throw new Error(err.error || "Erreur serveur");
+        const detail = Array.isArray(err.details)
+          ? err.details.map((d: any) => `${d.path?.join('.') || '?'}: ${d.message}`).join(' | ')
+          : "";
+        throw new Error(detail || err.error || "Erreur serveur");
       }
     } catch (err: any) {
       toast.error(err.message);
@@ -745,8 +768,8 @@ export function EquipmentDialog({
                     )}
                   </div>
 
-                  {/* Statut — masqué pour la catégorie Cuisine */}
-                  {!isCuisineCategory && (
+                  {/* Statut — masqué pour Cuisine et Matériel d'exploitation */}
+                  {!isCuisineCategory && !isExploitationCategory && (
                   <div className="space-y-2">
                     <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
                       État opérationnel <span className="text-red-400">*</span>
@@ -815,20 +838,33 @@ export function EquipmentDialog({
                                   </Label>
 
                                   {field.type === "select" && (
-                                    <Select
-                                      value={details[field.key] || ""}
-                                      onValueChange={v => setDetail(field.key, v)}
-                                      disabled={isReadOnly}
-                                    >
-                                      <SelectTrigger className="h-10 text-sm border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 focus:border-slate-700">
-                                        <SelectValue placeholder="Choisir..." />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {fieldOptions?.map(opt => (
-                                          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
+                                    <div className="space-y-2">
+                                      <Select
+                                        value={details[field.key] || ""}
+                                        onValueChange={v => setDetail(field.key, v)}
+                                        disabled={isReadOnly}
+                                      >
+                                        <SelectTrigger className="h-10 text-sm border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 focus:border-slate-700">
+                                          <SelectValue placeholder="Choisir..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {fieldOptions?.map(opt => (
+                                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {field.showOtherInput && details[field.key] === "Autre" && (
+                                        <Input
+                                          type="text"
+                                          placeholder="Précisez le type d'équipement..."
+                                          value={details[`${field.key}_autre`] || ""}
+                                          onChange={e => setDetail(`${field.key}_autre`, e.target.value)}
+                                          className="h-10 text-sm border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 focus:border-slate-700"
+                                          readOnly={isReadOnly}
+                                          autoFocus
+                                        />
+                                      )}
+                                    </div>
                                   )}
 
                                   {field.type === "textarea" && (
