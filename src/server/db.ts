@@ -161,9 +161,37 @@ export async function initSchema() {
     try {
       await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS performed_by_name VARCHAR(255)`);
       console.log('[DB] Migration: colonne performed_by_name ajoutée à movements.');
+    } catch (e) {}
+
+    // ── Migration : remplacer UNIQUE(name) sur zones par un index partiel
+    //    (seules les zones actives doivent avoir un nom unique,
+    //     les zones soft-deletées peuvent réutiliser un nom existant)
+    try {
+      // Supprimer l'ancienne contrainte UNIQUE absolue si elle existe
+      await query(`
+        ALTER TABLE zones DROP CONSTRAINT IF EXISTS zones_name_key
+      `);
+      // Créer un index unique partiel sur les zones actives uniquement
+      await query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS zones_active_name_unique
+        ON zones (name)
+        WHERE is_active = true
+      `);
+      console.log('[DB] Migration: contrainte UNIQUE zones.name remplacée par index partiel.');
     } catch (e) {
-      // Déjà existante — ignoré
+      // Déjà fait ou non applicable — ignoré
     }
+
+    // ── Migration : même chose pour stations (name unique par zone active) ──
+    try {
+      await query(`ALTER TABLE stations DROP CONSTRAINT IF EXISTS stations_zone_id_name_key`);
+      await query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS stations_active_zone_name_unique
+        ON stations (zone_id, name)
+        WHERE is_active = true
+      `);
+      console.log('[DB] Migration: contrainte UNIQUE stations (zone_id, name) remplacée par index partiel.');
+    } catch (e) {}
   }
 
   console.log('[DB] Schéma prêt.');
