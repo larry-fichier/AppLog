@@ -69,19 +69,26 @@ async function startServer() {
       console.log(`[Seed] Admin créé: ${config.adminEmail}`);
     }
 
-    // Seed Categories de base (INSERT si absent par code)
+    // Seed Categories de base — insère uniquement si ni l'UUID ni le code n'existent déjà
     const seedCategories = [
-      { id: '15f6658c-a379-4763-94db-eef00df2af01', code: 'rame',        label: 'Rame (Véhicule)'        },
-      { id: 'f9fa63e3-a079-498c-810a-83a3bd89d402', code: 'cuisine',     label: 'Cuisine'                },
-      { id: '9ea57b65-c639-4f92-b26a-f09820d3fc03', code: 'it',          label: 'Informatique'           },
-      { id: 'b2c4d6e8-f0a2-4b6c-8d0e-2f4a6b8c0d2e', code: 'energie',    label: 'Énergie'                },
-      { id: 'a1b3c5d7-e9f1-4a5b-7c9d-1e3f5a7b9c1d', code: 'exploitation', label: "Matériel d'exploitation" },
+      { code: 'rame',         label: 'Rame (Véhicule)'         },
+      { code: 'cuisine',      label: 'Cuisine'                  },
+      { code: 'it',           label: 'Informatique'             },
+      { code: 'energie',      label: 'Énergie'                  },
+      { code: 'exploitation', label: "Matériel d'exploitation"  },
     ];
     for (const cat of seedCategories) {
-      await query(
-        `INSERT INTO categories (id, code, label) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING`,
-        [cat.id, cat.code, cat.label]
-      );
+      try {
+        await query(
+          `INSERT INTO categories (code, label)
+           SELECT $1, $2
+           WHERE NOT EXISTS (SELECT 1 FROM categories WHERE code = $1)`,
+          [cat.code, cat.label]
+        );
+      } catch (e: any) {
+        // Ignore toute violation de contrainte (clé dupliquée) — catégorie déjà présente
+        if (e.code !== '23505') throw e;
+      }
     }
     console.log("[Seed] Catégories vérifiées/créées.");
 
