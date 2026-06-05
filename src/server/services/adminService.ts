@@ -29,7 +29,12 @@ export class AdminService {
     // ── Zones ─────────────────────────────────────────────
     const zoneIds = zones.map((z: any) => z.id).filter(Boolean);
     if (zoneIds.length > 0) {
-      await query("UPDATE zones SET is_active = false WHERE id != ANY($1)", [zoneIds]);
+      await query(
+        `UPDATE zones SET is_active = false WHERE NOT (id = ANY($1::uuid[]))`,
+        [zoneIds]
+      );
+    } else {
+      await query(`UPDATE zones SET is_active = false`);
     }
     for (const zone of zones) {
       if (!zone.id) continue;
@@ -43,7 +48,12 @@ export class AdminService {
     // ── Stations ──────────────────────────────────────────
     const stationIds = stations.map((s: any) => s.id).filter(Boolean);
     if (stationIds.length > 0) {
-      await query("UPDATE stations SET is_active = false WHERE id != ANY($1)", [stationIds]);
+      await query(
+        `UPDATE stations SET is_active = false WHERE NOT (id = ANY($1::uuid[]))`,
+        [stationIds]
+      );
+    } else {
+      await query(`UPDATE stations SET is_active = false`);
     }
     for (const station of stations) {
       if (!station.id) continue;
@@ -59,7 +69,10 @@ export class AdminService {
     // ── Catégories ────────────────────────────────────────
     const catIds = categories.map((c: any) => c.id).filter(Boolean);
     if (catIds.length > 0) {
-      await query("UPDATE categories SET is_active = false WHERE id != ANY($1)", [catIds]);
+      await query(
+        `UPDATE categories SET is_active = false WHERE NOT (id = ANY($1::uuid[]))`,
+        [catIds]
+      );
     }
     for (const cat of categories) {
       if (!cat.id) continue;
