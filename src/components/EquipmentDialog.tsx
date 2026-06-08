@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import React from "react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
@@ -267,6 +267,8 @@ export function EquipmentDialog({
   const [details, setDetails]           = useState<Record<string, any>>({});
   const [zoneId, setZoneId]             = useState("");
   const [stationId, setStationId]       = useState("");
+  // Nombre d'interventions sauvegardées au moment de l'ouverture — empêche leur suppression
+  const savedInterventionsCount = useRef<number>(0);
 
   React.useEffect(() => {
     if (!showHistory || !item?.id) return;
@@ -434,6 +436,200 @@ export function EquipmentDialog({
     setDetail("interventions", updated.length ? JSON.stringify(updated) : "");
   }
 
+  function printRapportInterventions() {
+    const ivs     = getInterventions();
+    const immat   = details["immatriculation"]  || item?.name || "—";
+    const chassis = details["numero_chassis"]   || "—";
+    const marque  = details["marque"]           || "—";
+    const typeVeh = details["type_vehicule"]    || "—";
+    const annee   = details["annee"]            || "—";
+    const km      = details["kilometrage"] ? `${details["kilometrage"]} km` : "—";
+    const dateStr = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+
+    const rows = ivs.map((iv, i) => `
+      <tr>
+        <td style="text-align:center;">${i + 1}</td>
+        <td><strong>${formatIntervDate(iv.date, iv.annee)}</strong></td>
+        <td>${iv.description}</td>
+      </tr>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Rapport d'interventions — ${immat}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; color: #1e293b; font-size: 11px; background: #fff; padding: 1.5cm 1.8cm; }
+    @page { size: A4; margin: 0; }
+
+    /* ── En-tête officielle ── */
+    .header-official {
+      display: grid;
+      grid-template-columns: 1fr 110px 1fr;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 10px;
+      border-bottom: 2.5px solid #f39c12;
+      margin-bottom: 14px;
+    }
+    .header-fr { text-align: center; line-height: 1.6; }
+    .header-en { text-align: center; line-height: 1.6; }
+    .header-logo { text-align: center; }
+    .header-logo img { width: 100px; height: 100px; object-fit: contain; }
+    .header-fr p, .header-en p { font-size: 7.5px; font-weight: bold; color: #1a252f; }
+    .header-fr .stars, .header-en .stars { font-size: 6px; color: #94a3b8; font-weight: normal; }
+    .header-fr .main, .header-en .main { font-size: 9.5px; font-weight: 900; color: #1a252f; }
+    .header-fr .sub-info { font-size: 7px; font-style: italic; margin-top: 6px; color: #555; }
+    .header-en .sub-info { font-size: 7px; font-style: italic; margin-top: 6px; color: #555; }
+
+    /* ── Titre du document ── */
+    .doc-title { text-align: center; margin: 12px 0 4px; }
+    .doc-title h1 { font-size: 14px; font-weight: 900; text-transform: uppercase; color: #1a252f; letter-spacing: 1px; }
+    .doc-title p  { font-size: 9px; color: #64748b; margin-top: 2px; }
+    .orange-line  { border: none; border-top: 2px solid #f39c12; margin: 10px 0; }
+
+    /* ── Fiche véhicule ── */
+    .section-title {
+      font-size: 9px; font-weight: 900; text-transform: uppercase;
+      letter-spacing: 1.5px; color: #0d1b2a;
+      border-left: 3px solid #f39c12;
+      padding-left: 8px; margin: 18px 0 8px;
+    }
+    .veh-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px 16px; background: #f8fafc;
+      border: 1px solid #e2e8f0; border-radius: 6px;
+      padding: 12px; margin-bottom: 14px;
+    }
+    .lbl { font-size: 8px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .05em; }
+    .val { font-size: 11px; font-weight: 600; color: #1a252f; margin-top: 1px; }
+
+    /* ── Tableaux ── */
+    table { width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 4px; }
+    thead tr { background: #0d1b2a; }
+    thead th {
+      color: white; padding: 7px 8px; text-align: left;
+      font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.8px;
+      border-bottom: 2px solid #f39c12;
+    }
+    tbody td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+
+    /* ── Signatures ── */
+    .signatures {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 40px; margin-top: 36px; padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .sig-block { text-align: center; }
+    .sig-title { font-size: 8.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; color: #1a252f; margin-bottom: 40px; }
+    .sig-line { border-top: 1px solid #94a3b8; margin: 0 20px; padding-top: 4px; font-size: 7.5px; color: #94a3b8; }
+
+    /* ── Footer ── */
+    .doc-footer {
+      margin-top: 24px; padding-top: 8px;
+      border-top: 1px solid #e2e8f0;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 7px; color: #94a3b8;
+    }
+
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══ EN-TÊTE OFFICIELLE ══ -->
+  <div class="header-official">
+    <div class="header-fr">
+      <p>REPUBLIQUE DU CAMEROUN</p>
+      <p class="stars">************</p>
+      <p style="font-style:italic">Paix – Travail – Patrie</p>
+      <p class="stars">************</p>
+      <p>PRESIDENCE DE LA REPUBLIQUE</p>
+      <p class="stars">************</p>
+      <p>SERVICES DU CONSEILLER TECHNIQUE</p>
+      <p class="stars">************</p>
+      <p class="main">PROJET HELIOS</p>
+      <p class="stars">************</p>
+      <p class="sub-info">Yaoundé, le ${dateStr}</p>
+    </div>
+    <div class="header-logo">
+      <img src="/logo.jpg" alt="Logo HELIOS" />
+    </div>
+    <div class="header-en">
+      <p>REPUBLIC OF CAMEROON</p>
+      <p class="stars">************</p>
+      <p style="font-style:italic">Peace – Work – Fatherland</p>
+      <p class="stars">************</p>
+      <p>PRESIDENCY OF THE REPUBLIC</p>
+      <p class="stars">************</p>
+      <p>TECHNICAL ADVISOR SERVICES</p>
+      <p class="stars">************</p>
+      <p class="main">HELIOS PROJECT</p>
+      <p class="stars">************</p>
+      <p class="sub-info">N° ______/SCT/PRC/HELIOS</p>
+    </div>
+  </div>
+
+  <!-- ══ TITRE DOCUMENT ══ -->
+  <div class="doc-title">
+    <h1>Rapport d'interventions véhicule</h1>
+    <p>Véhicule : ${immat} — ${ivs.length} intervention${ivs.length !== 1 ? "s" : ""} enregistrée${ivs.length !== 1 ? "s" : ""} — au ${dateStr}</p>
+  </div>
+  <hr class="orange-line" />
+
+  <!-- ══ FICHE VÉHICULE ══ -->
+  <div class="section-title">Identification du véhicule</div>
+  <div class="veh-grid">
+    <div><div class="lbl">Immatriculation</div><div class="val">${immat}</div></div>
+    <div><div class="lbl">N° Châssis</div><div class="val">${chassis}</div></div>
+    <div><div class="lbl">Marque</div><div class="val">${marque}</div></div>
+    <div><div class="lbl">Type de véhicule</div><div class="val">${typeVeh}</div></div>
+    <div><div class="lbl">Année</div><div class="val">${annee}</div></div>
+    <div><div class="lbl">Kilométrage</div><div class="val">${km}</div></div>
+  </div>
+
+  <!-- ══ TABLEAU INTERVENTIONS ══ -->
+  <div class="section-title">Historique des interventions (${ivs.length})</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40px;text-align:center;">#</th>
+        <th style="width:140px;">Date</th>
+        <th>Description / Nature de l'intervention</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows || '<tr><td colspan="3" style="padding:16px;text-align:center;color:#9ca3af;font-style:italic;">Aucune intervention enregistrée</td></tr>'}
+    </tbody>
+  </table>
+
+  <!-- ══ SIGNATURES ══ -->
+  <div class="signatures">
+    <div class="sig-block">
+      <div class="sig-title">Le Responsable Logistique</div>
+      <div class="sig-line">Signature &amp; Cachet</div>
+    </div>
+    <div class="sig-block">
+      <div class="sig-title">Le Chef Suivi Projet HELIOS</div>
+      <div class="sig-line">Signature &amp; Cachet</div>
+    </div>
+  </div>
+
+
+</body>
+</html>`;
+
+    const w = window.open("", "_blank", "width=820,height=700");
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 800);
+  }
+
   const isReadOnly = activeRole === "csph" || activeRole === "chef_service_administratif";
   const canDelete  = ["admin", "agent_logistique"].includes(activeRole);
 
@@ -481,7 +677,14 @@ export function EquipmentDialog({
       setZoneId((item as any).zone_id    || "");
       setStationId((item as any).station_id || "");
       // S'assurer que details est bien un objet (jamais null/undefined)
-      setDetails(item.details && typeof item.details === "object" ? { ...item.details } : {});
+      const rawDetails = item.details && typeof item.details === "object" ? { ...item.details } : {};
+      setDetails(rawDetails);
+      // Capturer le nb d'interventions déjà sauvegardées (elles ne pourront plus être supprimées)
+      try {
+        const raw = rawDetails["interventions"];
+        const parsed = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+        savedInterventionsCount.current = Array.isArray(parsed) ? parsed.length : 0;
+      } catch { savedInterventionsCount.current = 0; }
       setStep("info");
     } else {
       setCategoryId(defaultCategoryId || "");
@@ -491,6 +694,7 @@ export function EquipmentDialog({
       setZoneId("");
       setStationId("");
       setDetails({});
+      savedInterventionsCount.current = 0;
       setStep(defaultCategoryId ? "info" : "category");
     }
 
@@ -924,9 +1128,20 @@ export function EquipmentDialog({
                     (categoryLabelForFields.toLowerCase().match(/rame|véhicule|vehicule|voiture|camion|transport/))
                   )) && (
                     <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                      <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                        🔧 Historique des interventions ({getInterventions().length})
-                      </p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                          🔧 Historique des interventions ({getInterventions().length})
+                        </p>
+                        {getInterventions().length > 0 && (
+                          <button
+                            type="button"
+                            onClick={printRapportInterventions}
+                            className="text-[10px] font-black text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg px-2.5 py-1 transition-all flex items-center gap-1"
+                          >
+                            🖨️ Rapport
+                          </button>
+                        )}
+                      </div>
                       {getInterventions().length === 0 && (
                         <p className="text-xs text-slate-400 italic">Aucune intervention enregistrée.</p>
                       )}
@@ -940,7 +1155,7 @@ export function EquipmentDialog({
                                 </p>
                                 <p className="text-xs text-slate-700 dark:text-slate-300 mt-0.5 leading-snug">{iv.description}</p>
                               </div>
-                              {!isReadOnly && (
+                              {!isReadOnly && idx >= savedInterventionsCount.current && (
                                 <button
                                   type="button"
                                   onClick={() => removeIntervention(idx)}

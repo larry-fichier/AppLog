@@ -76,14 +76,30 @@ export class AdminService {
     }
     for (const cat of categories) {
       if (!cat.id) continue;
-      const code = cat.code
-        || cat.label?.toLowerCase().replace(/\s+/g, '_')
+      const label = cat.label || cat.name || "Sans Nom";
+      const code  = cat.code
+        || label.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
         || cat.id.substring(0, 8);
-      await query(`
-        INSERT INTO categories (id, code, label, is_active)
-        VALUES ($1, $2, $3, true)
-        ON CONFLICT (id) DO UPDATE SET label = $3, code = EXCLUDED.code, is_active = true
-      `, [cat.id, code, cat.label || cat.name || "Sans Nom"]);
+      try {
+        // ON CONFLICT (id) : on met à jour le label et is_active mais PAS le code
+        // pour éviter les conflits de code entre catégories existantes
+        await query(`
+          INSERT INTO categories (id, code, label, is_active)
+          VALUES ($1, $2, $3, true)
+          ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, is_active = true
+        `, [cat.id, code, label]);
+      } catch (e: any) {
+        if (e.code === '23505') {
+          // Le code généré existe déjà avec un autre id — utiliser l'UUID comme code de repli
+          await query(`
+            INSERT INTO categories (id, code, label, is_active)
+            VALUES ($1, $2, $3, true)
+            ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, is_active = true
+          `, [cat.id, cat.id.substring(0, 8), label]);
+        } else {
+          throw e;
+        }
+      }
     }
 
     return { success: true };
