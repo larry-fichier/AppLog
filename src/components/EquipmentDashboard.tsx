@@ -127,7 +127,14 @@ export function EquipmentDashboard({
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
-        setCategories(data.categories?.map((c: any) => ({ id: c.id, label: c.label })) ?? []);
+        const allCats: { id: string; label: string }[] = data.categories?.map((c: any) => ({ id: c.id, label: c.label })) ?? [];
+        const seenLabels = new Set<string>();
+        setCategories(allCats.filter(c => {
+          const key = c.label.trim().toLowerCase();
+          if (seenLabels.has(key)) return false;
+          seenLabels.add(key);
+          return true;
+        }));
         setZones(data.zones?.map((z: any) => ({ id: z.id, label: z.name })) ?? []);
         setStations(data.stations?.map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })) ?? []);
       })

@@ -233,7 +233,13 @@ export default function App() {
         const res = await fetch("/api/config");
         if (res.ok) {
           const data = await res.json();
-          setCategories(data.categories || []);
+          const seen = new Set<string>();
+          setCategories((data.categories || []).filter((c: any) => {
+            const key = (c.label || "").trim().toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          }));
           setDynamicSettings({
             categories: data.categories || [],
             zones:    (data.zones    || []).map((z: any) => ({ id: z.id, label: z.name })),
