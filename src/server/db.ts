@@ -52,6 +52,22 @@ export async function query(text: string, params?: any[]) {
   return pool.query(text, params);
 }
 
+export async function transact<T>(fn: (q: (text: string, params?: any[]) => Promise<any>) => Promise<T>): Promise<T> {
+  if (!pool) await connectDB();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn((text, params) => client.query(text, params));
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function initSchema() {
   console.log('[DB] Initialisation du schéma...');
   
@@ -191,6 +207,32 @@ export async function initSchema() {
         WHERE is_active = true
       `);
       console.log('[DB] Migration: contrainte UNIQUE stations (zone_id, name) remplacée par index partiel.');
+    } catch (e) {}
+
+    // ── Récupération : réactiver les stations inactives dont la zone est active.
+    //    Signe d'un save interrompu (sans transaction) : zones OK, stations partiellement désactivées.
+    try {
+      const { rowCount } = await query(`
+        UPDATE stations SET is_active = true
+        WHERE is_active = false
+          AND zone_id IN (SELECT id FROM zones WHERE is_active = true)
+      `);
+      if (rowCount && rowCount > 0) {
+        console.log(`[DB] Récupération : ${rowCount} station(s) réactivée(s) suite à un save interrompu.`);
+      }
+    } catch (e) {}
+
+    // ── Même récupération pour les zones (toutes inactives = save interrompu total) ──
+    try {
+      const { rows: [{ total, active }] } = await query(`
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE is_active = true) AS active
+        FROM zones
+      `);
+      if (parseInt(total) > 0 && parseInt(active) === 0) {
+        await query(`UPDATE zones SET is_active = true`);
+        console.log('[DB] Récupération : toutes les zones ont été réactivées (save interrompu détecté).');
+      }
     } catch (e) {}
   }
 

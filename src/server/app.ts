@@ -654,6 +654,31 @@ export async function createApp() {
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Récupération d'urgence : réactive les stations/zones coincées inactives
+  app.post("/api/admin/recover", authenticateToken, authorize(['admin']), async (req, res) => {
+    try {
+      const stations = await query(`
+        UPDATE stations SET is_active = true
+        WHERE is_active = false
+          AND zone_id IN (SELECT id FROM zones WHERE is_active = true)
+        RETURNING id, name
+      `);
+      const zones = await query(`
+        UPDATE zones SET is_active = true
+        WHERE is_active = false
+        RETURNING id, name
+      `);
+      res.json({
+        recovered_stations: stations.rows.length,
+        recovered_zones: zones.rows.length,
+        stations: stations.rows.map((r: any) => r.name),
+        zones: zones.rows.map((r: any) => r.name),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Admin Users — lecture ouverte aux superviseurs, écriture admin seulement
   app.get("/api/admin/users", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), async (req, res) => {
     try { res.json(await AdminService.getUsers()); }

@@ -9,16 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   Loader2, Plus, Trash2, Save, Users, Settings2, MapPin,
-  ShieldCheck, Key, UserPlus, AlertCircle
+  ShieldCheck, Key, UserPlus, AlertCircle, Search, X
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 
-interface AdminSettingsProps {
-  isBypass?: boolean;
-}
-
-export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
+export function AdminSettings() {
   const [loading,        setLoading]        = useState(true);
   const [saving,         setSaving]         = useState(false);
   const [dbMode,         setDbMode]         = useState<string>("Vérification...");
@@ -46,6 +42,8 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
     ],
   });
 
+  const [stationSearch, setStationSearch] = useState('');
+
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetUser, setResetUser] = useState<any>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -67,6 +65,24 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
         setDbMode(data.mode || "Inconnu");
       }
     } catch { setDbMode("Erreur de connexion"); }
+  }
+
+  async function handleRecover() {
+    try {
+      const res = await apiFetch("/api/admin/recover", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        const n = data.recovered_stations + data.recovered_zones;
+        if (n > 0) {
+          toast.success(`${data.recovered_stations} bureau(x) et ${data.recovered_zones} zone(s) récupérés`);
+          fetchConfig();
+        } else {
+          toast.info("Aucun élément à récupérer");
+        }
+      } else {
+        toast.error(data.error || "Erreur lors de la récupération");
+      }
+    } catch { toast.error("Impossible de contacter le serveur"); }
   }
 
   async function fetchConfig() {
@@ -109,6 +125,24 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
 
   // ── Sauvegarde config ────────────────────────────────────
   async function handleSaveSettings() {
+    // Validation : noms de zones en double
+    const zoneNames = settings.zones.map(z => z.label.trim().toLowerCase());
+    const dupZone = zoneNames.find((n, i) => zoneNames.indexOf(n) !== i);
+    if (dupZone) {
+      toast.error(`Deux services ont le même nom : « ${settings.zones.find(z => z.label.trim().toLowerCase() === dupZone)?.label} »`);
+      return;
+    }
+
+    // Validation : noms de bureaux en double dans la même zone
+    const stationKeys = (settings.stations as any[]).map(s => `${s.zoneId || ''}|${s.label.trim().toLowerCase()}`);
+    const dupStation = stationKeys.find((k, i) => k.startsWith('') === false || stationKeys.indexOf(k) !== i);
+    if (dupStation) {
+      const [zoneId, name] = dupStation.split('|');
+      const zoneName = settings.zones.find(z => z.id === zoneId)?.label || 'zone inconnue';
+      toast.error(`Deux bureaux ont le même nom dans « ${zoneName} » : « ${name} »`);
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await apiFetch("/api/admin/config", {
@@ -269,6 +303,22 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
   }, {});
   const unassignedStations = stationsByZone["unassigned"] || [];
 
+  // ── Recherche de station ───────────────────────────────
+  const searchTerm = stationSearch.trim().toLowerCase();
+  const searchedStations = searchTerm
+    ? sortedStations.filter(s => s.label.toLowerCase().includes(searchTerm))
+    : sortedStations;
+  const searchedByZone = searchedStations.reduce<Record<string, typeof sortedStations>>((acc, s) => {
+    const key = (s as any).zoneId || "unassigned";
+    acc[key] = acc[key] || [];
+    acc[key].push(s);
+    return acc;
+  }, {});
+  const searchedUnassigned = searchedByZone["unassigned"] || [];
+  const visibleZones = searchTerm
+    ? sortedZones.filter(z => searchedByZone[z.id]?.length > 0)
+    : sortedZones;
+
   const removeZone = (zoneId: string) => setSettings(prev => ({
     ...prev,
     zones: prev.zones.filter(zone => zone.id !== zoneId),
@@ -308,14 +358,27 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
         <TabsContent value="logic" className="space-y-8 mt-0">
 
           {/* Indicateur BD */}
-          <div className="flex items-center gap-3 bg-zinc-50 p-4 rounded-xl border border-zinc-200 shadow-sm">
-            <div className={`p-2 rounded-full ${dbMode.includes("Réel") ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
-              {dbMode.includes("Réel") ? <ShieldCheck size={20} /> : <AlertCircle size={20} />}
+          <div className="flex items-center justify-between gap-3 bg-zinc-50 p-4 rounded-xl border border-zinc-200 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${dbMode.includes("Réel") ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
+                {dbMode.includes("Réel") ? <ShieldCheck size={20} /> : <AlertCircle size={20} />}
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Source de Données</p>
+                <p className="text-sm font-black">{dbMode}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Source de Données</p>
-              <p className="text-sm font-black">{dbMode}</p>
-            </div>
+            {settings.stations.length === 0 && settings.zones.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRecover}
+                className="text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100 text-xs font-bold gap-1.5"
+              >
+                <AlertCircle size={14} />
+                Récupérer les bureaux manquants
+              </Button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -363,7 +426,34 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                 </div>
               </CardHeader>
               <CardContent className="p-4 space-y-4">
-                {sortedZones.map(zone => (
+                {/* Barre de recherche */}
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Rechercher un bureau..."
+                    value={stationSearch}
+                    onChange={e => setStationSearch(e.target.value)}
+                    className="pl-8 pr-8 h-9 text-sm"
+                  />
+                  {stationSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setStationSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {searchTerm && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {searchedStations.length} bureau{searchedStations.length !== 1 ? 'x' : ''} trouvé{searchedStations.length !== 1 ? 's' : ''}
+                    {searchedStations.length === 0 && ` pour « ${stationSearch} »`}
+                  </p>
+                )}
+
+                {visibleZones.map(zone => (
                   <div key={zone.id} className="space-y-3 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                       <div>
@@ -382,7 +472,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                       </div>
                     </div>
                     <div className="space-y-3">
-                      {(stationsByZone[zone.id] || []).map(station => (
+                      {(searchedByZone[zone.id] || []).map(station => (
                         <div key={station.id} className="grid grid-cols-1 md:grid-cols-2 gap-2 p-3 bg-white rounded-lg border border-zinc-100">
                           <div className="space-y-1">
                             <Label className="text-[10px] uppercase font-bold text-muted-foreground">Nom du Bureau</Label>
@@ -418,7 +508,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                     </div>
                   </div>
                 ))}
-                {unassignedStations.length > 0 && (
+                {searchedUnassigned.length > 0 && (
                   <div className="space-y-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
                     <div className="flex items-center justify-between gap-2">
                       <div>
@@ -431,7 +521,7 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                       </Button>
                     </div>
                     <div className="space-y-3">
-                      {unassignedStations.map(station => (
+                      {searchedUnassigned.map(station => (
                         <div key={station.id} className="grid grid-cols-1 md:grid-cols-2 gap-2 p-3 bg-white rounded-lg border border-zinc-100">
                           <div className="space-y-1">
                             <Label className="text-[10px] uppercase font-bold text-muted-foreground">Nom du Bureau</Label>
@@ -469,6 +559,12 @@ export function AdminSettings({ isBypass = false }: AdminSettingsProps) {
                 )}
                 {sortedZones.length === 0 && unassignedStations.length === 0 && (
                   <div className="text-sm text-muted-foreground">Aucun bureau configuré. Ajoutez un service puis rattachez les bureaux.</div>
+                )}
+                {searchTerm && searchedStations.length === 0 && sortedStations.length > 0 && (
+                  <div className="flex flex-col items-center gap-1 py-4 text-muted-foreground">
+                    <Search size={18} className="opacity-40" />
+                    <p className="text-sm">Aucun bureau ne correspond à « {stationSearch} »</p>
+                  </div>
                 )}
                 <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider"
                   onClick={() => addToList("stations", { id: crypto.randomUUID(), label: "Nouveau Bureau" })}>

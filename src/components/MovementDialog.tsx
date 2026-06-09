@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
-import { Loader2, Save, Pencil } from "lucide-react";
+import { Loader2, Save, Pencil, Search, X } from "lucide-react";
 import {
   Dialog, DialogContent,
   DialogTitle, DialogDescription,
@@ -77,6 +77,7 @@ export function MovementDialog({
   const [reference, setReference]               = useState('');
   const [dateDeploiement, setDateDeploiement]   = useState('');
   const [dateRetourPrevue, setDateRetourPrevue] = useState('');
+  const [stationQuery, setStationQuery]         = useState('');
 
   // Pré-remplir si on est en mode édition
   useEffect(() => {
@@ -89,6 +90,7 @@ export function MovementDialog({
       setReference(editingMovement.reference || '');
       setDateDeploiement(editingMovement.date_deploiement?.split('T')[0] || '');
       setDateRetourPrevue(editingMovement.date_retour_prevue?.split('T')[0] || '');
+      setStationQuery('');
     } else if (open && !editingMovement) {
       setType('transfert');
       setToZoneId('');
@@ -98,8 +100,17 @@ export function MovementDialog({
       setReference(generateReference('transfert', stations.find(s => s.id === currentStationId), undefined));
       setDateDeploiement('');
       setDateRetourPrevue('');
+      setStationQuery('');
     }
   }, [open, editingMovement]);
+
+  // Résultats de la recherche de bureau (toutes zones confondues)
+  const stationSearchResults = stationQuery.trim().length >= 1
+    ? stations
+        .filter(s => s.label.toLowerCase().includes(stationQuery.toLowerCase().trim()))
+        .sort((a, b) => a.label.localeCompare(b.label))
+        .slice(0, 8)
+    : [];
 
   const filteredDest = stations.filter(s => {
     if (!toZoneId) return false;
@@ -313,6 +324,57 @@ export function MovementDialog({
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   {type === 'deploiement' ? 'Site de déploiement' : 'Vers'}
                 </p>
+
+                {/* Recherche rapide de bureau */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-bold text-slate-500">Recherche rapide</Label>
+                  <div className="relative">
+                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Taper le nom d'un bureau..."
+                      value={stationQuery}
+                      onChange={e => setStationQuery(e.target.value)}
+                      className="w-full h-9 pl-8 pr-8 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 transition-all"
+                    />
+                    {stationQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setStationQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                  {stationSearchResults.length > 0 && (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-md z-10 relative">
+                      {stationSearchResults.map(s => {
+                        const zone = zones.find(z => z.id === (s as any).zoneId);
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2"
+                            onClick={() => {
+                              const zId = (s as any).zoneId || '';
+                              handleToZoneChange(zId);
+                              handleToStationChange(s.id);
+                              setStationQuery('');
+                            }}
+                          >
+                            <span className="font-medium text-slate-700 truncate">{s.label}</span>
+                            {zone && <span className="text-[11px] text-slate-400 shrink-0">{zone.label}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {stationQuery.trim().length >= 1 && stationSearchResults.length === 0 && (
+                    <p className="text-[11px] text-slate-400 italic px-1">Aucun bureau trouvé</p>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold text-slate-500">Zone *</Label>
