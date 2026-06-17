@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'crypto';
 import { query } from '../db.ts';
 import { config } from '../config.ts';
 
@@ -29,9 +30,9 @@ export class AuthService {
     }
 
     const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
+      { id: user.id, username: user.username, role: user.role, jti: randomUUID() },
       config.jwtSecret,
-      { expiresIn: '24h' }
+      { expiresIn: '30m' }
     );
 
     return {

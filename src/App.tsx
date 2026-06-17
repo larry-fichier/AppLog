@@ -33,8 +33,18 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   }
 
   const response = await originalFetch(input, init);
-
   if (response.status === 401) {
+    // Session révoquée par une nouvelle connexion ailleurs : ne pas tenter de refresh
+    const cloned = response.clone();
+    try {
+      const body = await cloned.json();
+      if (body?.error === "SESSION_REPLACED") {
+        sessionStorage.removeItem("helios_user");
+        window.dispatchEvent(new CustomEvent("helios:session-replaced"));
+        return response;
+      }
+    } catch {}
+
     // Si un refresh est déjà en cours, attendre sa résolution
     if (isRefreshing) {
       return new Promise((resolve) => {
@@ -168,8 +178,17 @@ export default function App() {
       if (notifRef.current) { notifRef.current.close(); }
       toast.error("Votre session a expiré. Veuillez vous reconnecter.");
     };
+    const onReplaced = () => {
+      setUser(null);
+      if (notifRef.current) { notifRef.current.close(); }
+      toast.error("Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.", { duration: 8000 });
+    };
     window.addEventListener("helios:session-expired", onExpired);
-    return () => window.removeEventListener("helios:session-expired", onExpired);
+    window.addEventListener("helios:session-replaced", onReplaced);
+    return () => {
+      window.removeEventListener("helios:session-expired", onExpired);
+      window.removeEventListener("helios:session-replaced", onReplaced);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -180,6 +199,13 @@ export default function App() {
       try {
         const event = JSON.parse(e.data);
         if (event.type === "connected") return;
+        if (event.type === "session_replaced") {
+          sessionStorage.removeItem("helios_user");
+          setUser(null);
+          if (notifRef.current) { notifRef.current.close(); }
+          toast.error("Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.", { duration: 8000 });
+          return;
+        }
         const id = ++notifIdRef.current;
         const message = event.type === "equipment_critical"
           ? `⚠️ ${event.payload.message}`
@@ -298,15 +324,25 @@ export default function App() {
 
       if (!res.ok) {
         const err = await res.json();
+
+        // Blocage déclenché côté serveur (15 min)
+        if (res.status === 429) {
+          setLockUntil(Date.now() + LOCK_DURATION_MS);
+          setLoginAttempts(0);
+          toast.error(err.error || "Compte temporairement bloqué.");
+          return;
+        }
+
         const newAttempts = loginAttempts + 1;
         setLoginAttempts(newAttempts);
 
         if (newAttempts >= MAX_ATTEMPTS) {
           setLockUntil(Date.now() + LOCK_DURATION_MS);
           setLoginAttempts(0);
-          toast.error("Compte temporairement bloqué après trop de tentatives (2 min).");
+          toast.error("Compte temporairement bloqué après trop de tentatives.");
         } else {
-          toast.error(err.error || "Identifiants incorrects.");
+          const left = err.attemptsLeft ?? (MAX_ATTEMPTS - newAttempts);
+          toast.error(`${err.error || "Identifiants incorrects."} (${left} tentative${left > 1 ? "s" : ""} restante${left > 1 ? "s" : ""})`);
         }
         return;
       }

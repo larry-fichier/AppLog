@@ -8,6 +8,8 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { authenticateToken, authorize } from './middleware/auth.ts';
+import { activeSessions } from './sessions.ts';
+import { checkLock, recordFailure, recordSuccess, remainingAttempts } from './loginGuard.ts';
 import { EquipmentService } from './services/equipmentService.ts';
 import { AdminService } from './services/adminService.ts';
 import { AuthService } from './services/authService.ts';
@@ -120,8 +122,45 @@ export async function createApp() {
       httpOnly: true,
       secure: process.env.COOKIE_SECURE === 'true',
       sameSite: 'lax' as const,
-      // Pas de maxAge → cookie de session : supprimé dès que le navigateur est fermé
     };
+  }
+
+  // ─── Restriction IP ───────────────────────────────────────
+  // ALLOWED_IPS=192.168.1.0/24,10.0.0.5  (vide = aucune restriction)
+  const ALLOWED_IPS = (process.env.ALLOWED_IPS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  function ipInCidr(ip: string, cidr: string): boolean {
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    if (!cidr.includes('/')) return cleanIp === cidr;
+    const [network, prefix] = cidr.split('/');
+    const bits = parseInt(prefix, 10);
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    const toNum = (s: string) =>
+      s.split('.').reduce((acc, o) => ((acc << 8) | parseInt(o, 10)) >>> 0, 0);
+    return (toNum(cleanIp) & mask) === (toNum(network) & mask);
+  }
+
+  if (ALLOWED_IPS.length > 0) {
+    app.use('/api/', (req, res, next) => {
+      const ip = (req.ip || '').replace(/^::ffff:/, '');
+      if (ALLOWED_IPS.some(allowed => ipInCidr(ip, allowed))) return next();
+      logger.security('IP_BLOCKED', 'high', { ip, path: req.path });
+      res.status(403).json({ error: "Accès refusé depuis cette adresse IP." });
+    });
+  }
+
+  // ─── Validation complexité mot de passe ───────────────────
+  function validatePassword(password: string): string | null {
+    if (!password || password.length < 8)
+      return "Le mot de passe doit contenir au moins 8 caractères.";
+    if (!/[A-Z]/.test(password))
+      return "Le mot de passe doit contenir au moins une lettre majuscule.";
+    if (!/[0-9]/.test(password))
+      return "Le mot de passe doit contenir au moins un chiffre.";
+    if (!/[^A-Za-z0-9]/.test(password))
+      return "Le mot de passe doit contenir au moins un caractère spécial (!@#$…).";
+    return null;
   }
 
   // Health check
@@ -133,13 +172,36 @@ export async function createApp() {
   app.post("/api/auth/login", loginLimiter, async (req, res) => {
     try {
       const validated = loginSchema.parse(req.body);
-      const identifier = validated.username || validated.email;
+      const identifier = (validated.username || validated.email || '') as string;
+
+      // ── Blocage serveur (indépendant du client) ──
+      const lock = checkLock(identifier);
+      if (lock.locked) {
+        logger.security('LOGIN_BLOCKED', 'medium', { ip: req.ip, identifier });
+        return res.status(429).json({
+          error: `Compte temporairement bloqué. Réessayez dans ${lock.remainingSeconds}s.`,
+        });
+      }
+
       const result = await AuthService.login(identifier, validated.password);
 
-      logger.audit('LOGIN_SUCCESS', result.user.id, {
-        username: validated.username,
-        ip: req.ip
-      });
+      recordSuccess(identifier);
+      logger.audit('LOGIN_SUCCESS', result.user.id, { username: identifier, ip: req.ip });
+
+      // Déconnecter toute session SSE existante pour cet utilisateur
+      Array.from(sseClients)
+        .filter((c: any) => c.userId === result.user.id)
+        .forEach((c: any) => {
+          try {
+            c.res.write(`data: ${JSON.stringify({ type: 'session_replaced' })}\n\n`);
+            c.res.end();
+          } catch {}
+          sseClients.delete(c);
+        });
+
+      // Enregistrer le jti de la nouvelle session (identifiant fixe)
+      const decodedNew: any = jwt.decode(result.token);
+      if (decodedNew?.jti) activeSessions.set(result.user.id, decodedNew.jti);
 
       res.cookie('auth_token', result.token, cookieOptions());
       res.json({ user: result.user, message: "Connecté avec succès" });
@@ -147,16 +209,24 @@ export async function createApp() {
       if (e.name === 'ZodError') {
         return res.status(400).json({ error: "Données invalides", details: e.errors });
       }
-      logger.security('LOGIN_FAILED', 'medium', {
-        ip: req.ip,
-        identifier: req.body.email || req.body.username
+      const identifier = req.body.username || req.body.email || '';
+      recordFailure(identifier);
+      const left = remainingAttempts(identifier);
+      logger.security('LOGIN_FAILED', 'medium', { ip: req.ip, identifier, attemptsLeft: left });
+      res.status(401).json({
+        error: "Identifiants invalides",
+        attemptsLeft: left,
       });
-      res.status(401).json({ error: "Identifiants invalides" });
     }
   });
 
   // Auth logout
   app.post("/api/auth/logout", (req, res) => {
+    const token = req.cookies?.auth_token;
+    if (token) {
+      const decoded: any = jwt.decode(token);
+      if (decoded?.id) activeSessions.delete(decoded.id);
+    }
     res.clearCookie("auth_token", {
       httpOnly: true,
       sameSite: "lax",
@@ -174,19 +244,9 @@ export async function createApp() {
       let decoded: any;
       try {
         decoded = jwt.verify(token, config.jwtSecret);
-      } catch (err: any) {
-        if (err.name === "TokenExpiredError") {
-          decoded = jwt.decode(token);
-          if (!decoded || !decoded.id) {
-            return res.status(401).json({ error: "Token invalide" });
-          }
-          const expiredAt = decoded.exp * 1000;
-          if (Date.now() - expiredAt > 7 * 24 * 60 * 60 * 1000) {
-            return res.status(401).json({ error: "Session trop ancienne, reconnectez-vous" });
-          }
-        } else {
-          return res.status(401).json({ error: "Token invalide" });
-        }
+      } catch {
+        // Token expiré = inactivité > 30 min → reconnexion obligatoire
+        return res.status(401).json({ error: "Session expirée après inactivité. Veuillez vous reconnecter." });
       }
 
       const result = await query(
@@ -198,11 +258,13 @@ export async function createApp() {
       }
 
       const user = result.rows[0];
+      // Préserver le jti original → la session unique reste cohérente
       const newToken = jwt.sign(
-        { id: user.id, username: user.username, role: user.role },
+        { id: user.id, username: user.username, role: user.role, jti: decoded.jti },
         config.jwtSecret,
-        { expiresIn: "24h" }
+        { expiresIn: "30m" }
       );
+      // Pas de mise à jour d'activeSessions : le jti ne change pas
 
       res.cookie("auth_token", newToken, cookieOptions());
       res.json({
@@ -687,14 +749,20 @@ export async function createApp() {
 
   // Utilisateurs connectés — ouvert aux superviseurs
   app.get("/api/admin/users/online", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), (req, res) => {
-    const online = Array.from(sseClients).map((c: any) => ({
-      userId: c.userId,
-      role:   c.role,
-    }));
+    const seen = new Set<string>();
+    const online = Array.from(sseClients)
+      .filter((c: any) => {
+        if (seen.has(c.userId)) return false;
+        seen.add(c.userId);
+        return true;
+      })
+      .map((c: any) => ({ userId: c.userId, role: c.role }));
     res.json(online);
   });
 
   app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
+    const pwdError = validatePassword(req.body.password);
+    if (pwdError) return res.status(400).json({ error: pwdError });
     try { res.status(201).json(await AdminService.createUser(req.body)); }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -710,9 +778,11 @@ export async function createApp() {
   });
 
   app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
+    const pwdError = validatePassword(newPassword);
+    if (pwdError) return res.status(400).json({ error: pwdError });
     try {
-      const { newPassword } = req.body;
-      if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
       res.json({ success: true, user: await AdminService.resetPassword(req.params.id, newPassword) });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Erreur serveur" });
