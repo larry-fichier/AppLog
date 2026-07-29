@@ -25,6 +25,10 @@ function isUUID(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+// ── Rôles habilités à consulter le Journal global d'audit ──────
+// Chef de bureau (admin) + rôles de supervision (CSA, CSPH).
+const AUDIT_VIEWER_ROLES = ['admin', 'chef_service_administratif', 'csph'];
+
 export async function createApp() {
   const app = express();
 
@@ -116,6 +120,35 @@ export async function createApp() {
     app.use(generalLimiter);
   }
 
+  // ─── Journal global d'audit (traçabilité de toutes les actions) ───
+  // Écrit dans logs/audit.log (fichier), persiste en base (table audit_logs)
+  // et notifie en temps réel (SSE) les rôles admin / chef_service_administratif / csph.
+  async function recordAudit(
+    action: string,
+    user: { id: string; role?: string; username?: string; display_name?: string },
+    details?: Record<string, any>,
+    ip?: string
+  ) {
+    const userName = user.display_name || user.username || 'Inconnu';
+    logger.audit(action, user.id, { ...details, ip });
+    try {
+      await query(
+        `INSERT INTO audit_logs (action, user_id, user_name, role, details, ip)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [action, user.id || null, userName, user.role || null, JSON.stringify(details || {}), ip || null]
+      );
+    } catch (e: any) {
+      console.error('[AUDIT] Échec insertion audit_logs:', e.message);
+    }
+    (app as any).broadcastEvent?.(
+      {
+        type: 'audit_log',
+        payload: { action, userName, role: user.role, details, timestamp: new Date().toISOString() },
+      },
+      AUDIT_VIEWER_ROLES
+    );
+  }
+
   // ─── Helper cookie ────────────────────────────────────────
   function cookieOptions() {
     return {
@@ -186,7 +219,10 @@ export async function createApp() {
       const result = await AuthService.login(identifier, validated.password);
 
       recordSuccess(identifier);
-      logger.audit('LOGIN_SUCCESS', result.user.id, { username: identifier, ip: req.ip });
+      recordAudit('LOGIN_SUCCESS', {
+        id: result.user.id, role: result.user.role,
+        username: result.user.username, display_name: result.user.displayName,
+      }, { username: identifier }, req.ip);
 
       // Déconnecter toute session SSE existante pour cet utilisateur
       Array.from(sseClients)
@@ -225,7 +261,10 @@ export async function createApp() {
     const token = req.cookies?.auth_token;
     if (token) {
       const decoded: any = jwt.decode(token);
-      if (decoded?.id) activeSessions.delete(decoded.id);
+      if (decoded?.id) {
+        activeSessions.delete(decoded.id);
+        recordAudit('LOGOUT', { id: decoded.id, role: decoded.role, username: decoded.username }, {}, req.ip);
+      }
     }
     res.clearCookie("auth_token", {
       httpOnly: true,
@@ -366,7 +405,7 @@ export async function createApp() {
         details
       });
 
-      logger.audit('EQUIPMENT_CREATED', req.user.id, { equipmentId: id, equipmentName: name, ip: req.ip });
+      recordAudit('EQUIPMENT_CREATED', req.user, { equipmentId: id, equipmentName: name }, req.ip);
       (req.app as any).broadcastEvent?.({ type: 'equipment_created', payload: { id: String(id), name } });
       res.status(201).json({ id: String(id) });
     } catch (e: any) {
@@ -424,7 +463,7 @@ export async function createApp() {
         }
       }
 
-      logger.audit('EQUIPMENT_UPDATED', req.user.id, { equipmentId: id, ip: req.ip });
+      recordAudit('EQUIPMENT_UPDATED', req.user, { equipmentId: id, equipmentName: name || undefined }, req.ip);
       res.json({ success: true });
     } catch (e: any) {
       if (e.name === 'ZodError') {
@@ -440,7 +479,7 @@ export async function createApp() {
     try {
       if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
       await query("UPDATE equipment SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", [req.params.id]);
-      logger.audit('EQUIPMENT_DELETED', req.user.id, { equipmentId: req.params.id, ip: req.ip });
+      recordAudit('EQUIPMENT_DELETED', req.user, { equipmentId: req.params.id }, req.ip);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -473,7 +512,7 @@ export async function createApp() {
         new_status ?? null,
         id
       ]);
-      logger.audit('MOVEMENT_UPDATED', req.user.id, { movementId: id, ip: req.ip });
+      recordAudit('MOVEMENT_UPDATED', req.user, { movementId: id }, req.ip);
       res.json({ success: true });
     } catch (e: any) {
       console.error('[PUT /api/movements]', e.message);
@@ -532,7 +571,7 @@ export async function createApp() {
 
     try {
       const { rows: [eq] } = await query(
-        'SELECT status, zone_id, station_id FROM equipment WHERE id=$1 AND deleted_at IS NULL',
+        'SELECT name, status, zone_id, station_id FROM equipment WHERE id=$1 AND deleted_at IS NULL',
         [equipment_id]
       );
       if (!eq) return res.status(404).json({ error: 'Equipement introuvable' });
@@ -577,6 +616,10 @@ export async function createApp() {
         ]
       );
       res.status(201).json(mv);
+
+      recordAudit('MOVEMENT_CREATED', req.user, {
+        movementId: mv.id, equipmentId: equipment_id, equipmentName: eq.name, movementType: type,
+      }, req.ip);
 
       if (type === 'sortie' || new_status === 'hors_service') {
         (req.app as any).broadcastEvent?.({
@@ -635,6 +678,10 @@ export async function createApp() {
          isUUID(zone_id) ? zone_id : null,
          eq.status]
       );
+
+      recordAudit('STOCK_SORTIE', req.user, {
+        equipmentId: id, equipmentName: eq.name, quantite: qty, destination: destLabel, newStock,
+      }, req.ip);
 
       const alerte = seuilAlerte > 0 && newStock <= seuilAlerte;
       if (alerte) {
@@ -700,9 +747,10 @@ export async function createApp() {
     req.on("close", () => { clearInterval(keepAlive); sseClients.delete(client); });
   });
 
-  (app as any).broadcastEvent = (event: { type: string; payload: any }) => {
+  (app as any).broadcastEvent = (event: { type: string; payload: any }, roles?: string[]) => {
     const data = `data: ${JSON.stringify(event)}\n\n`;
     sseClients.forEach((client: any) => {
+      if (roles && !roles.includes(client.role)) return;
       try { client.res.write(data); }
       catch { sseClients.delete(client); }
     });
@@ -711,13 +759,21 @@ export async function createApp() {
   // Config
   app.get("/api/config", getConfig);
   app.get("/api/admin/config", authenticateToken, getConfig);
-  app.post("/api/admin/config", authenticateToken, authorize(['admin']), async (req, res) => {
-    try { res.json(await AdminService.saveConfig(req.body)); }
+  app.post("/api/admin/config", authenticateToken, authorize(['admin']), async (req: any, res) => {
+    try {
+      const result = await AdminService.saveConfig(req.body);
+      recordAudit('CONFIG_UPDATED', req.user, {
+        categories: req.body?.categories?.length,
+        zones: req.body?.zones?.length,
+        stations: req.body?.stations?.length,
+      }, req.ip);
+      res.json(result);
+    }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Récupération d'urgence : réactive les stations/zones coincées inactives
-  app.post("/api/admin/recover", authenticateToken, authorize(['admin']), async (req, res) => {
+  app.post("/api/admin/recover", authenticateToken, authorize(['admin']), async (req: any, res) => {
     try {
       const stations = await query(`
         UPDATE stations SET is_active = true
@@ -730,6 +786,9 @@ export async function createApp() {
         WHERE is_active = false
         RETURNING id, name
       `);
+      recordAudit('ADMIN_RECOVER', req.user, {
+        recoveredStations: stations.rows.length, recoveredZones: zones.rows.length,
+      }, req.ip);
       res.json({
         recovered_stations: stations.rows.length,
         recovered_zones: zones.rows.length,
@@ -760,32 +819,105 @@ export async function createApp() {
     res.json(online);
   });
 
-  app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req, res) => {
+  app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req: any, res) => {
     const pwdError = validatePassword(req.body.password);
     if (pwdError) return res.status(400).json({ error: pwdError });
-    try { res.status(201).json(await AdminService.createUser(req.body)); }
+    try {
+      const created = await AdminService.createUser(req.body);
+      recordAudit('USER_CREATED', req.user, {
+        targetUserId: created.id, targetUsername: created.username, targetRole: created.role,
+      }, req.ip);
+      res.status(201).json(created);
+    }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/admin/users/:id/role", authenticateToken, authorize(['admin']), async (req, res) => {
-    try { res.json(await AdminService.updateUserRole(req.params.id, req.body.role)); }
+  app.put("/api/admin/users/:id/role", authenticateToken, authorize(['admin']), async (req: any, res) => {
+    try {
+      const updated = await AdminService.updateUserRole(req.params.id, req.body.role);
+      recordAudit('USER_ROLE_UPDATED', req.user, {
+        targetUserId: req.params.id, targetUsername: updated.username, newRole: updated.role,
+      }, req.ip);
+      res.json(updated);
+    }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/admin/users/:id", authenticateToken, authorize(['admin']), async (req, res) => {
-    try { await AdminService.deleteUser(req.params.id); res.json({ success: true }); }
+  app.delete("/api/admin/users/:id", authenticateToken, authorize(['admin']), async (req: any, res) => {
+    try {
+      await AdminService.deleteUser(req.params.id);
+      recordAudit('USER_DELETED', req.user, { targetUserId: req.params.id }, req.ip);
+      res.json({ success: true });
+    }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req, res) => {
+  app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req: any, res) => {
     const { newPassword } = req.body;
     if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
     const pwdError = validatePassword(newPassword);
     if (pwdError) return res.status(400).json({ error: pwdError });
     try {
-      res.json({ success: true, user: await AdminService.resetPassword(req.params.id, newPassword) });
+      const resetUser = await AdminService.resetPassword(req.params.id, newPassword);
+      recordAudit('USER_PASSWORD_RESET', req.user, {
+        targetUserId: req.params.id, targetUsername: resetUser.username,
+      }, req.ip);
+      res.json({ success: true, user: resetUser });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Erreur serveur" });
+    }
+  });
+
+  // ── Journal global d'audit — traçabilité complète de toutes les actions ──
+  // Accès réservé au chef de bureau (admin) et aux rôles de supervision.
+  app.get("/api/admin/audit-logs", authenticateToken, authorize(AUDIT_VIEWER_ROLES), async (req: any, res) => {
+    try {
+      const page     = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize || '50'), 10) || 50));
+      const { action, role, q, from, to } = req.query;
+
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (action && action !== 'all') {
+        params.push(action);
+        conditions.push(`action = $${params.length}`);
+      }
+      if (role && role !== 'all') {
+        params.push(role);
+        conditions.push(`role = $${params.length}`);
+      }
+      if (from) {
+        params.push(from);
+        conditions.push(`created_at >= $${params.length}`);
+      }
+      if (to) {
+        params.push(to);
+        conditions.push(`created_at <= $${params.length}`);
+      }
+      if (q) {
+        params.push(`%${q}%`);
+        conditions.push(`(user_name ILIKE $${params.length} OR action ILIKE $${params.length} OR details::text ILIKE $${params.length})`);
+      }
+
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const { rows: countRows } = await query(`SELECT COUNT(*) AS total FROM audit_logs ${where}`, params);
+      const total = parseInt(countRows[0]?.total || '0', 10);
+
+      params.push(pageSize, (page - 1) * pageSize);
+      const { rows } = await query(
+        `SELECT id, action, user_id, user_name, role, details, ip, created_at
+         FROM audit_logs ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+
+      res.json({ rows, total, page, pageSize });
+    } catch (e: any) {
+      console.error('[API] audit-logs GET error:', e.message);
+      res.status(500).json({ error: e.message });
     }
   });
 

@@ -171,6 +171,24 @@ export default function App() {
   const notifRef = React.useRef<EventSource | null>(null);
   const notifIdRef = React.useRef(0);
 
+  // ── Libellés lisibles pour le journal global d'audit (admin + supervision) ──
+  const AUDIT_ACTION_LABELS: Record<string, string> = {
+    LOGIN_SUCCESS: "s'est connecté(e)",
+    LOGOUT: "s'est déconnecté(e)",
+    EQUIPMENT_CREATED: "a créé un équipement",
+    EQUIPMENT_UPDATED: "a modifié un équipement",
+    EQUIPMENT_DELETED: "a supprimé un équipement",
+    MOVEMENT_CREATED: "a enregistré un mouvement",
+    MOVEMENT_UPDATED: "a modifié un mouvement",
+    STOCK_SORTIE: "a effectué une sortie de stock",
+    CONFIG_UPDATED: "a mis à jour la configuration",
+    ADMIN_RECOVER: "a lancé une récupération d'urgence",
+    USER_CREATED: "a créé un utilisateur",
+    USER_ROLE_UPDATED: "a changé le rôle d'un utilisateur",
+    USER_DELETED: "a supprimé un utilisateur",
+    USER_PASSWORD_RESET: "a réinitialisé un mot de passe",
+  };
+
   // ── Écoute expiration de session (déclenchée par l'intercepteur fetch) ──
   React.useEffect(() => {
     const onExpired = () => {
@@ -207,9 +225,17 @@ export default function App() {
           return;
         }
         const id = ++notifIdRef.current;
-        const message = event.type === "equipment_critical"
-          ? `⚠️ ${event.payload.message}`
-          : `📦 Équipement créé`;
+        let message: string;
+        if (event.type === "audit_log") {
+          const label = AUDIT_ACTION_LABELS[event.payload?.action] || event.payload?.action || "a effectué une action";
+          message = `📋 ${event.payload?.userName || "Quelqu'un"} ${label}`;
+        } else if (event.type === "equipment_critical") {
+          message = `⚠️ ${event.payload?.message || "Équipement passé en état critique"}`;
+        } else if (event.type === "stock_alerte") {
+          message = `📉 Stock bas — ${event.payload?.name || "Équipement"} (${event.payload?.new_stock} ${event.payload?.unite || ""})`;
+        } else {
+          message = `📦 Équipement créé`;
+        }
         setNotifications(prev => [{ id, message, type: event.type, read: false }, ...prev].slice(0, 50));
       } catch {}
     };
@@ -492,6 +518,38 @@ export default function App() {
                   </div>
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-500 flex items-center justify-center text-white font-black text-sm shadow">
                     {getInitial(user)}
+                  </div>
+                  {/* 🔔 Cloche notifications (journal global) */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
+                      className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
+                      title="Notifications"
+                    >
+                      <Bell size={18} />
+                      {unreadCount > 0 && (
+                        <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                          {unreadCount > 9 ? "9+" : unreadCount}
+                        </span>
+                      )}
+                    </button>
+                    {showNotifs && (
+                      <div className="absolute right-0 top-11 w-80 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg z-50">
+                        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                          <span className="text-xs font-black text-slate-700">Notifications</span>
+                          <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                          {notifications.length === 0 ? (
+                            <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
+                          ) : notifications.map(n => (
+                            <div key={n.id} className={`px-4 py-2.5 text-xs ${n.type === "equipment_critical" ? "bg-red-50 text-red-700" : "text-slate-700"}`}>
+                              {n.message}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => setDarkMode(d => !d)}

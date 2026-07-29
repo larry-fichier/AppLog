@@ -9,10 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   Loader2, Plus, Trash2, Save, Users, Settings2, MapPin,
-  ShieldCheck, Key, UserPlus, AlertCircle, Search, X
+  ShieldCheck, Key, UserPlus, AlertCircle, Search, X, ShieldAlert
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
 
 export function AdminSettings() {
   const [loading,        setLoading]        = useState(true);
@@ -349,9 +350,10 @@ export function AdminSettings() {
       </div>
 
       <Tabs defaultValue="users" className="w-full">
-        <TabsList className="grid grid-cols-2 w-full max-w-sm h-12 bg-white border border-border-custom p-1 mb-8">
+        <TabsList className="grid grid-cols-3 w-full max-w-xl h-12 bg-white border border-border-custom p-1 mb-8">
           <TabsTrigger value="logic" className="font-bold gap-2"><Settings2 size={16} />Logique Métier</TabsTrigger>
           <TabsTrigger value="users" className="font-bold gap-2"><Users size={16} />Utilisateurs</TabsTrigger>
+          <TabsTrigger value="audit" className="font-bold gap-2"><ShieldAlert size={16} />Journal Global</TabsTrigger>
         </TabsList>
 
         {/* ══ ONGLET LOGIQUE MÉTIER ══ */}
@@ -800,6 +802,11 @@ export function AdminSettings() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ══ ONGLET JOURNAL GLOBAL (AUDIT) ══ */}
+        <TabsContent value="audit" className="mt-0">
+          <AuditLogPanel />
         </TabsContent>
       </Tabs>
 

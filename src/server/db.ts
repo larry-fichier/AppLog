@@ -165,12 +165,30 @@ export async function initSchema() {
       note       TEXT,
       reference  VARCHAR(100),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    // ── Journal global d'audit : trace TOUTES les actions du système ──
+    // (connexions, gestion des utilisateurs, config, équipements, mouvements…)
+    // Visible uniquement par les rôles admin / chef_service_administratif / csph.
+    `CREATE TABLE IF NOT EXISTS audit_logs (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      action     VARCHAR(60) NOT NULL,
+      user_id    UUID REFERENCES users(id),
+      user_name  VARCHAR(255),
+      role       VARCHAR(50),
+      details    JSONB,
+      ip         VARCHAR(64),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`
   ];
 
   for (const sql of tables) {
     await query(sql);
   }
+
+  try {
+    await query(`CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs (created_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS audit_logs_action_idx ON audit_logs (action)`);
+  } catch (e) {}
 
   // ── Migration : ajouter performed_by_name si absente (bases existantes) ──
   if (isRealPostgres) {

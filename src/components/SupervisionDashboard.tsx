@@ -10,6 +10,7 @@ import {
   CalendarClock, TrendingDown, Gauge, AlertOctagon, Timer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
 
 // ─── Types ───────────────────────────────────────────────────
 interface Equipment {
@@ -347,7 +348,7 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   const [loading,     setLoading]    = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
-  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "alertes" | "utilisateurs";
+  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "audit" | "alertes" | "utilisateurs";
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [activeCat,  setActiveCat]  = useState("all");
   const [searchInv,  setSearchInv]  = useState("");
@@ -848,6 +849,7 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
     { id: "mouvements",    label: `Mouvements (${movements.length})`, icon: <Activity size={13} /> },
     { id: "analyse",       label: "Analyse",                         icon: <FlaskConical size={13} /> },
     { id: "journal",       label: `Journal (${journal.length})`,     icon: <BookOpen size={13} /> },
+    { id: "audit",         label: "Journal global",                  icon: <Shield size={13} /> },
     { id: "alertes",       label: `Alertes (${alerts.length})`,      icon: <AlertTriangle size={13} /> },
     { id: "utilisateurs",  label: `Utilisateurs (${allUsers.length})`, icon: <User size={13} /> },
   ] as { id: Tab; label: string; icon: React.ReactNode }[];
@@ -1392,6 +1394,9 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
           </div>
         </div>
       )}
+
+      {/* ══ TAB JOURNAL GLOBAL (AUDIT) ══ */}
+      {activeTab === "audit" && <AuditLogPanel />}
 
       {/* ══ TAB ALERTES ══ */}
       {activeTab === "alertes" && (
