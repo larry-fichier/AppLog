@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { GlobalSettings, AppUser, UserRole } from "@/types";
+import { generateUUID } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -410,7 +411,7 @@ export function AdminSettings() {
                   </div>
                 ))}
                 <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider"
-                  onClick={() => addToList("zones", { id: crypto.randomUUID(), label: "Nouveau Service" })}>
+                  onClick={() => addToList("zones", { id: generateUUID(), label: "Nouveau Service" })}>
                   <Plus size={14} className="mr-2" />Nouveau Service
                 </Button>
               </CardContent>
@@ -468,7 +469,7 @@ export function AdminSettings() {
                           <Trash2 size={16} />
                         </Button>
                         <Button variant="outline" size="sm" className="h-9 px-3"
-                          onClick={() => addToList("stations", { id: crypto.randomUUID(), label: "Nouveau Bureau", zoneId: zone.id })}>
+                          onClick={() => addToList("stations", { id: generateUUID(), label: "Nouveau Bureau", zoneId: zone.id })}>
                           Ajouter un bureau
                         </Button>
                       </div>
@@ -518,7 +519,7 @@ export function AdminSettings() {
                         <p className="text-[11px] text-muted-foreground">Affectez ces bureaux à un service existant.</p>
                       </div>
                       <Button variant="outline" size="sm" className="h-9 px-3"
-                        onClick={() => addToList("stations", { id: crypto.randomUUID(), label: "Nouveau Bureau" })}>
+                        onClick={() => addToList("stations", { id: generateUUID(), label: "Nouveau Bureau" })}>
                         Ajouter un bureau
                       </Button>
                     </div>
@@ -569,7 +570,7 @@ export function AdminSettings() {
                   </div>
                 )}
                 <Button variant="outline" className="w-full h-10 border-dashed text-xs font-bold uppercase tracking-wider"
-                  onClick={() => addToList("stations", { id: crypto.randomUUID(), label: "Nouveau Bureau" })}>
+                  onClick={() => addToList("stations", { id: generateUUID(), label: "Nouveau Bureau" })}>
                   <Plus size={14} className="mr-2" />Nouveau Bureau
                 </Button>
               </CardContent>
@@ -596,7 +597,7 @@ export function AdminSettings() {
                   </div>
                 ))}
                 <Button variant="outline" className="h-9 border-dashed text-[10px] font-black uppercase"
-                  onClick={() => addToList("categories", { id: crypto.randomUUID(), label: "Nouvelle Catégorie", icon: "Box" })}>
+                  onClick={() => addToList("categories", { id: generateUUID(), label: "Nouvelle Catégorie", icon: "Box" })}>
                   <Plus size={12} className="mr-2" />Catégorie
                 </Button>
               </CardContent>

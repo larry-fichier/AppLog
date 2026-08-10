@@ -36,22 +36,23 @@ export async function createApp() {
   app.set('trust proxy', 1);
 
   // ✅ HTTPS Enforcement — uniquement si un vrai proxy SSL transmet x-forwarded-proto
-  if (config.nodeEnv === 'production') {
-    app.use((req, res, next) => {
-      const proto = req.header('x-forwarded-proto');
+  // if (config.nodeEnv === 'production') {
+  //  app.use((req, res, next) => {
+  //    const proto = req.header('x-forwarded-proto');
       // Ne rediriger que si le header est explicitement 'http' (proxy SSL actif)
       // et jamais pour les appels API (évite les boucles)
-      if (proto === 'http' && !req.path.startsWith('/api/')) {
-        return res.redirect(301, `https://${req.header('host')}${req.url}`);
-      }
-      next();
-    });
-  }
+  //    if (proto === 'http' && !req.path.startsWith('/api/')) {
+  //      return res.redirect(301, `https://${req.header('host')}${req.url}`);
+  //    }
+  //    next();
+  //  });
+ //  }
 
   // ✅ Security headers avec helmet
   if (config.nodeEnv === 'production') {
     app.use(helmet({
-      contentSecurityPolicy: {
+      hsts: false, 
+	contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
@@ -62,7 +63,8 @@ export async function createApp() {
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
           formAction: ["'self'"],
-          frameAncestors: ["'self'"]
+          frameAncestors: ["'self'"],
+	  upgradeInsecureRequests: null
         }
       }
     }));
@@ -917,6 +919,24 @@ export async function createApp() {
       res.json({ rows, total, page, pageSize });
     } catch (e: any) {
       console.error('[API] audit-logs GET error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Journal global d'audit — agrégat par utilisateur (pour l'onglet Utilisateurs) ──
+  app.get("/api/admin/audit-logs/summary", authenticateToken, authorize(AUDIT_VIEWER_ROLES), async (req: any, res) => {
+    try {
+      const { rows } = await query(`
+        SELECT user_id, user_name, COUNT(*) AS total, MAX(created_at) AS last_at
+        FROM audit_logs
+        GROUP BY user_id, user_name
+      `);
+      res.json(rows.map((r: any) => ({
+        userId: r.user_id, userName: r.user_name,
+        total: parseInt(r.total, 10), lastAt: r.last_at,
+      })));
+    } catch (e: any) {
+      console.error('[API] audit-logs summary error:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
