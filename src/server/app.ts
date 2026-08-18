@@ -120,22 +120,23 @@ export async function createApp() {
   app.set('trust proxy', 1);
 
   // ✅ HTTPS Enforcement — uniquement si un vrai proxy SSL transmet x-forwarded-proto
-  if (config.nodeEnv === 'production') {
-    app.use((req, res, next) => {
-      const proto = req.header('x-forwarded-proto');
+  // if (config.nodeEnv === 'production') {
+  //  app.use((req, res, next) => {
+  //    const proto = req.header('x-forwarded-proto');
       // Ne rediriger que si le header est explicitement 'http' (proxy SSL actif)
       // et jamais pour les appels API (évite les boucles)
-      if (proto === 'http' && !req.path.startsWith('/api/')) {
-        return res.redirect(301, `https://${req.header('host')}${req.url}`);
-      }
-      next();
-    });
-  }
+  //    if (proto === 'http' && !req.path.startsWith('/api/')) {
+  //      return res.redirect(301, `https://${req.header('host')}${req.url}`);
+  //    }
+  //    next();
+  //  });
+ //  }
 
   // ✅ Security headers avec helmet
   if (config.nodeEnv === 'production') {
     app.use(helmet({
-      contentSecurityPolicy: {
+      hsts: false, 
+	contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
@@ -146,7 +147,8 @@ export async function createApp() {
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
           formAction: ["'self'"],
-          frameAncestors: ["'self'"]
+          frameAncestors: ["'self'"],
+	  upgradeInsecureRequests: null
         }
       }
     }));
