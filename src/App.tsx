@@ -401,6 +401,21 @@ export default function App() {
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  // Une fois vues (ouvertes puis refermées), les notifications ne doivent plus
+  // encombrer la cloche — seules celles arrivées depuis (donc encore non lues)
+  // doivent rester.
+  const toggleNotifs = () => {
+    setShowNotifs(v => {
+      const next = !v;
+      if (next) markAllRead();
+      else setNotifications(prev => prev.filter(n => !n.read));
+      return next;
+    });
+  };
+  const closeNotifs = () => {
+    setNotifications(prev => prev.filter(n => !n.read));
+    setShowNotifs(false);
+  };
 
   // ── Init auth + config ─────────────────────────────────
   useEffect(() => {
@@ -744,7 +759,7 @@ export default function App() {
                   {/* 🔔 Cloche notifications (journal global) */}
                   <div className="relative">
                     <button
-                      onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
+                      onClick={toggleNotifs}
                       className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
                       title="Notifications"
                     >
@@ -759,7 +774,7 @@ export default function App() {
                       <div className="absolute right-0 top-11 w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg z-50">
                         <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
                           <span className="text-xs font-black text-slate-700">Notifications</span>
-                          <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                          <button onClick={closeNotifs} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
                         </div>
                         <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                           {notifications.length === 0 ? (
@@ -842,7 +857,7 @@ export default function App() {
                   {/* 🔔 Cloche notifications */}
                   <div className="relative">
                     <button
-                      onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
+                      onClick={toggleNotifs}
                       className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
                       title="Notifications"
                     >
@@ -857,7 +872,7 @@ export default function App() {
                       <div className="absolute right-0 top-11 w-80 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg z-50">
                         <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
                           <span className="text-xs font-black text-slate-700">Notifications</span>
-                          <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                          <button onClick={closeNotifs} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
                         </div>
                         <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                           {notifications.length === 0 ? (
@@ -1010,7 +1025,7 @@ export default function App() {
                       {/* 🔔 Cloche notifications */}
                       <div className="relative">
                         <button
-                          onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
+                          onClick={toggleNotifs}
                           className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
                           title="Notifications"
                         >
@@ -1025,7 +1040,7 @@ export default function App() {
                           <div className="absolute right-0 top-11 w-80 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg z-50">
                             <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
                               <span className="text-xs font-black text-slate-700">Notifications</span>
-                              <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                              <button onClick={closeNotifs} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
                             </div>
                             <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                               {notifications.length === 0 ? (
