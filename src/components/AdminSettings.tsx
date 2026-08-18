@@ -30,6 +30,13 @@ export function AdminSettings() {
   });
 
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [usersPage, setUsersPage] = useState(1);
+  const USERS_PAGE_SIZE = 10;
+  const usersTotalPages = Math.max(1, Math.ceil(users.length / USERS_PAGE_SIZE));
+  const paginatedUsers = users.slice((usersPage - 1) * USERS_PAGE_SIZE, usersPage * USERS_PAGE_SIZE);
+  useEffect(() => {
+    if (usersPage > usersTotalPages) setUsersPage(usersTotalPages);
+  }, [usersTotalPages, usersPage]);
 
   const [settings, setSettings] = useState<GlobalSettings>({
     categories: [],
@@ -38,6 +45,9 @@ export function AdminSettings() {
     roles: [
       { id: "admin",                      label: "Administrateur" },
       { id: "chef_service_administratif", label: "Chef Service Administratif" },
+      { id: "chef_bureau",                label: "Chef de Bureau" },
+      { id: "chef_ram",                   label: "Chef RAM" },
+      { id: "com_zone",                   label: "COM Zone" },
       { id: "agent_logistique",           label: "Agent Logistique" },
       { id: "csph",                       label: "CSPH" },
     ],
@@ -50,6 +60,7 @@ export function AdminSettings() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [activeTab, setActiveTab] = useState("users");
 
   // ── Chargement initial ────────────────────────────────────
   useEffect(() => {
@@ -342,14 +353,16 @@ export function AdminSettings() {
           <h2 className="text-2xl font-black text-text-dark tracking-tight">Configuration Super User</h2>
           <p className="text-sm text-muted-foreground">Contrôle total du système HELIOS.</p>
         </div>
-        <Button onClick={handleSaveSettings} disabled={saving}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-10 shadow-lg shadow-emerald-200 transition-all hover:scale-105 active:scale-95">
-          {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-          ENREGISTRER LA CONFIGURATION
-        </Button>
+        {activeTab === "logic" && (
+          <Button onClick={handleSaveSettings} disabled={saving}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-10 shadow-lg shadow-emerald-200 transition-all hover:scale-105 active:scale-95">
+            {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+            ENREGISTRER LA CONFIGURATION
+          </Button>
+        )}
       </div>
 
-      <Tabs defaultValue="users" className="w-full">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid grid-cols-3 w-full max-w-xl h-12 bg-white border border-border-custom p-1 mb-8">
           <TabsTrigger value="logic" className="font-bold gap-2"><Settings2 size={16} />Logique Métier</TabsTrigger>
           <TabsTrigger value="users" className="font-bold gap-2"><Users size={16} />Utilisateurs</TabsTrigger>
@@ -723,6 +736,7 @@ export function AdminSettings() {
                   <p className="text-sm font-bold">Aucun utilisateur</p>
                 </div>
               ) : (
+                <>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
@@ -733,7 +747,7 @@ export function AdminSettings() {
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map(user => (
+                      {paginatedUsers.map(user => (
                         <tr key={user.uid} className="border-b border-border-custom hover:bg-[#fafbfc] transition-colors">
 
                           {/* Nom */}
@@ -799,6 +813,43 @@ export function AdminSettings() {
                     </tbody>
                   </table>
                 </div>
+                {usersTotalPages > 1 && (
+                  <div className="px-6 py-3 border-t border-border-custom flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
+                      Page {usersPage} / {usersTotalPages} — {users.length} compte{users.length !== 1 ? "s" : ""}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setUsersPage(p => Math.max(1, p - 1))}
+                        disabled={usersPage === 1}
+                        className="h-8 px-3 text-xs font-black rounded-lg border border-border-custom bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        ← Préc.
+                      </button>
+                      {Array.from({ length: usersTotalPages }, (_, i) => i + 1).map(p => (
+                        <button
+                          key={p}
+                          onClick={() => setUsersPage(p)}
+                          className={`h-8 w-8 text-xs font-black rounded-lg border transition-all ${
+                            usersPage === p
+                              ? "bg-accent text-white border-accent"
+                              : "border-border-custom bg-white text-zinc-500 hover:bg-zinc-50"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setUsersPage(p => Math.min(usersTotalPages, p + 1))}
+                        disabled={usersPage === usersTotalPages}
+                        className="h-8 px-3 text-xs font-black rounded-lg border border-border-custom bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        Suiv. →
+                      </button>
+                    </div>
+                  </div>
+                )}
+                </>
               )}
             </CardContent>
           </Card>

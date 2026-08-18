@@ -102,10 +102,11 @@ export class AdminService {
 
   static async getUsers() {
     const { rows } = await query(`
-      SELECT id, username, display_name, role, created_at
-      FROM users
-      WHERE deleted_at IS NULL
-      ORDER BY created_at DESC
+      SELECT u.id, u.username, u.display_name, u.role, u.zone_id, z.name AS zone_name, u.created_at
+      FROM users u
+      LEFT JOIN zones z ON z.id = u.zone_id
+      WHERE u.deleted_at IS NULL
+      ORDER BY u.created_at DESC
     `);
     return rows;
   }
@@ -116,16 +117,18 @@ export class AdminService {
     password: string;
     displayName?: string;
     role?: string;
+    zoneId?: string;
   }) {
-    const { username, password, displayName, role } = data;
+    const { username, password, displayName, role, zoneId } = data;
 
     if (!username || !password) {
       throw new Error("Nom d'utilisateur et mot de passe sont obligatoires");
     }
 
-    // Vérification unicité username
+    // Vérification unicité username (insensible à la casse, cohérent avec
+    // l'index unique users_active_username_unique côté base)
     const existing = await query(
-      "SELECT id FROM users WHERE username = $1 AND deleted_at IS NULL",
+      "SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND deleted_at IS NULL",
       [username]
     );
     if (existing.rows.length > 0) {
@@ -138,23 +141,32 @@ export class AdminService {
 
     // email laissé NULL — la colonne est désormais nullable
     const { rows } = await query(`
-      INSERT INTO users (username, password_hash, display_name, role)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, username, display_name, role, created_at
-    `, [username, passwordHash, finalDisplayName, finalRole]);
+      INSERT INTO users (username, password_hash, display_name, role, zone_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, username, display_name, role, zone_id, created_at
+    `, [username, passwordHash, finalDisplayName, finalRole, zoneId || null]);
 
     return rows[0];
   }
 
-  static async updateUserRole(id: string, role: string) {
+  // zoneId : undefined = ne pas toucher à la zone actuelle, null = la retirer, string = l'assigner
+  static async updateUserRole(id: string, role: string, zoneId?: string | null) {
     if (!id || !role) throw new Error("ID et rôle sont obligatoires");
+
+    const setClauses = ['role = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    const params: any[] = [role];
+    if (zoneId !== undefined) {
+      params.push(zoneId || null);
+      setClauses.push(`zone_id = $${params.length}`);
+    }
+    params.push(id);
 
     const { rows } = await query(`
       UPDATE users
-      SET role = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2 AND deleted_at IS NULL
-      RETURNING id, username, role
-    `, [role, id]);
+      SET ${setClauses.join(', ')}
+      WHERE id = $${params.length} AND deleted_at IS NULL
+      RETURNING id, username, role, zone_id
+    `, params);
 
     if (rows.length === 0) throw new Error("Utilisateur non trouvé");
     return rows[0];

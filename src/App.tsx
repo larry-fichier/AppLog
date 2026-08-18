@@ -6,18 +6,23 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalSettings } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   Loader2, LogIn, LogOut, LayoutDashboard,
   Settings as SettingsIcon, ArrowLeftRight,
   ChevronDown, ChevronRight, Box,
   Car, Utensils, Laptop, Zap, Thermometer,
   Truck, Archive, ShieldAlert,
-  Bell, Moon, Sun, Package,
+  Bell, Moon, Sun, Package, ClipboardCheck,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { MovementsPage } from "@/components/MovementsPage";
 import { SupervisionDashboard } from "@/components/SupervisionDashboard";
+import { ComZoneDashboard } from "@/components/ComZoneDashboard";
+import { ApprobationsPanel } from "@/components/ApprobationsPanel";
+import { ChefRamDashboard } from "@/components/ChefRamDashboard";
 
 // ── Intercepteur fetch : refresh automatique du token ─────────
 let isRefreshing = false;
@@ -107,7 +112,7 @@ function getCatIcon(label: string = "", size = 16) {
 }
 
 // ── Types menu ─────────────────────────────────────────────
-type MenuId = "dashboard" | "movements" | `cat_${string}` | "settings";
+type MenuId = "dashboard" | "movements" | `cat_${string}` | "settings" | "approbations";
 
 interface NavItem {
   id: MenuId;
@@ -139,6 +144,16 @@ export default function App() {
   const [activeMenu, setActiveMenu]         = useState<MenuId>("dashboard");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["inventaire"]));
 
+  // Remet le menu actif sur le tableau de bord à chaque changement d'identité
+  // (nouvelle connexion, ou déconnexion forcée par le contrôle d'identité).
+  // Sans ça, App.tsx ne démonte jamais (seul le contenu bascule login/dashboard),
+  // donc si un onglet reste ouvert et qu'un autre utilisateur s'y reconnecte, il
+  // hérite du dernier menu affiché — potentiellement une page blanche si ce menu
+  // n'existe pas pour son rôle (ex: "Approbations" pour un agent_logistique).
+  React.useEffect(() => {
+    if (user) setActiveMenu("dashboard");
+  }, [user?.id]);
+
   const [dynamicSettings, setDynamicSettings] = useState<GlobalSettings | null>(null);
   const [categories, setCategories] = useState<{ id: string; label: string }[]>([]);
 
@@ -166,10 +181,21 @@ export default function App() {
   }, [darkMode]);
 
   // ── Notifications SSE ──────────────────────────────────
-  const [notifications, setNotifications] = useState<{ id: number; message: string; type: string; read: boolean }[]>([]);
+  const [notifications, setNotifications] = useState<{ id: number; message: string; type: string; read: boolean; payload?: any; created_at?: string }[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
   const notifRef = React.useRef<EventSource | null>(null);
   const notifIdRef = React.useRef(0);
+
+  // Types de notification qui portent une "opération" que chef_bureau/CSA/admin
+  // peuvent traiter directement (approuver/rejeter/marquer ravitaillé) en cliquant dessus.
+  const ACTIONABLE_NOTIF_TYPES = ["stock_declaration_created", "resupply_needed"];
+  // Types purement informatifs — cliquables par TOUS les rôles qui les reçoivent
+  // (ex: chef_ram sur une panne/réparation véhicule) pour voir le détail complet,
+  // sans action d'approbation associée.
+  const READONLY_DETAIL_TYPES = ["equipment_critical", "equipment_repaired"];
+  const [alertDetail, setAlertDetail] = useState<{ type: string; payload: any; created_at?: string } | null>(null);
+  const [alertActionLoading, setAlertActionLoading] = useState(false);
+  const [alertNote, setAlertNote] = useState("");
 
   // ── Libellés lisibles pour le journal global d'audit (admin + supervision) ──
   const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -187,7 +213,108 @@ export default function App() {
     USER_ROLE_UPDATED: "a changé le rôle d'un utilisateur",
     USER_DELETED: "a supprimé un utilisateur",
     USER_PASSWORD_RESET: "a réinitialisé un mot de passe",
+    EQUIPMENT_PANNE_DECLAREE: "a déclaré une panne",
+    EQUIPMENT_REPARATION_DECLAREE: "a signalé une réparation",
+    EQUIPMENT_DECLASSE: "a déclassé un équipement",
+    EQUIPMENT_REFORME: "a réformé un véhicule",
+    STOCK_DECLARATION_CREATED: "a déclaré un écart de stock",
+    STOCK_DECLARATION_CONFIRMED: "a confirmé son stock (sans écart)",
+    STOCK_DECLARATION_APPROVED: "a approuvé une déclaration de stock",
+    STOCK_DECLARATION_REJECTED: "a rejeté une déclaration de stock",
+    RESUPPLY_NEEDED: "a déclenché une demande de ravitaillement",
+    RESUPPLY_FULFILLED: "a marqué un ravitaillement effectif",
+    RESUPPLY_CONFIRMED: "a confirmé la réception d'un ravitaillement",
+    REPORT_GENERATED: "a généré un rapport",
   };
+
+  const AUDIT_ACTION_ICONS: Record<string, string> = {
+    LOGIN_SUCCESS: "🔓",
+    LOGOUT: "🔒",
+    EQUIPMENT_CREATED: "🆕",
+    EQUIPMENT_UPDATED: "✏️",
+    EQUIPMENT_DELETED: "🗑️",
+    MOVEMENT_CREATED: "🔀",
+    MOVEMENT_UPDATED: "🔀",
+    STOCK_SORTIE: "📤",
+    CONFIG_UPDATED: "⚙️",
+    ADMIN_RECOVER: "🛠️",
+    USER_CREATED: "👤",
+    USER_ROLE_UPDATED: "🔑",
+    USER_DELETED: "🚫",
+    USER_PASSWORD_RESET: "🔐",
+    EQUIPMENT_PANNE_DECLAREE: "⚠️",
+    EQUIPMENT_REPARATION_DECLAREE: "✅",
+    EQUIPMENT_DECLASSE: "♻️",
+    EQUIPMENT_REFORME: "🎖️",
+    STOCK_DECLARATION_CREATED: "📝",
+    STOCK_DECLARATION_CONFIRMED: "✅",
+    STOCK_DECLARATION_APPROVED: "✅",
+    STOCK_DECLARATION_REJECTED: "❌",
+    RESUPPLY_NEEDED: "🚚",
+    RESUPPLY_FULFILLED: "📦",
+    RESUPPLY_CONFIRMED: "✅",
+    REPORT_GENERATED: "📄",
+  };
+
+  // ── Construit le message affiché pour une notification, à partir d'un
+  // événement { type, payload } — utilisé aussi bien pour les événements SSE
+  // en direct que pour le backfill /api/notifications/recent (mêmes clés de
+  // payload dans les deux cas, pour ne jamais dupliquer ce formatage).
+  function buildNotificationMessage(event: { type: string; payload?: any }): string {
+    if (event.type === "audit_log") {
+      const label = AUDIT_ACTION_LABELS[event.payload?.action] || event.payload?.action || "a effectué une action";
+      return `📋 ${event.payload?.userName || "Quelqu'un"} ${label}`;
+    } else if (event.type === "equipment_critical") {
+      return `⚠️ ${event.payload?.message || "Équipement passé en état critique"}`;
+    } else if (event.type === "equipment_repaired") {
+      return `✅ ${event.payload?.message || "Équipement réparé — de retour en service"}`;
+    } else if (event.type === "stock_alerte") {
+      return `📉 Stock bas — ${event.payload?.name || "Équipement"} (${event.payload?.new_stock} ${event.payload?.unite || ""})`;
+    } else if (event.type === "stock_declaration_created") {
+      return `📝 Écart de stock signalé — ${event.payload?.equipmentName || "Équipement"} (${event.payload?.previousQuantity} → ${event.payload?.declaredQuantity})`;
+    } else if (event.type === "stock_declaration_approved") {
+      return `✅ Déclaration de stock approuvée — ${event.payload?.equipmentName || "Équipement"}`;
+    } else if (event.type === "stock_declaration_rejected") {
+      return `❌ Déclaration de stock rejetée${event.payload?.reason ? ` — « ${event.payload.reason} »` : ""}`;
+    } else if (event.type === "resupply_needed") {
+      return `🚚 Ravitaillement nécessaire — ${event.payload?.name || "Équipement"} (${event.payload?.quantity} ${event.payload?.unite || ""})`;
+    } else if (event.type === "resupply_fulfilled") {
+      return `📦 Ravitaillement effectif — confirmez la réception`;
+    } else if (event.type === "resupply_confirmed") {
+      return `✅ Réception de ravitaillement confirmée`;
+    } else if (event.type === "movement_transfer_requested") {
+      return `🔀 Transfert en attente d'approbation — ${event.payload?.equipmentName || "Équipement"}`;
+    } else if (event.type === "movement_transfer_approved") {
+      return `✅ Transfert approuvé — ${event.payload?.equipmentName || "Équipement"}`;
+    } else if (event.type === "movement_transfer_rejected") {
+      return `❌ Transfert rejeté${event.payload?.reason ? ` — « ${event.payload.reason} »` : ""}`;
+    } else if (event.type === "equipment_created") {
+      return `📦 Équipement créé — ${event.payload?.name || ""}`;
+    }
+    return `📦 Équipement créé`;
+  }
+
+  // ── Backfill : peuple la cloche avec les événements critiques récents dès
+  // la connexion, pour ne pas perdre les alertes émises pendant que l'onglet
+  // n'était pas ouvert (les événements SSE sont éphémères, non rejouables).
+  React.useEffect(() => {
+    if (!user) return;
+    fetch("/api/notifications/recent", { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((rows: { type: string; payload: any; created_at: string }[]) => {
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        const backfilled = rows.map(row => ({
+          id: ++notifIdRef.current,
+          message: buildNotificationMessage(row),
+          type: row.type,
+          read: true,
+          payload: row.payload,
+          created_at: row.created_at,
+        }));
+        setNotifications(prev => [...prev, ...backfilled].slice(0, 50));
+      })
+      .catch(() => {});
+  }, [user]);
 
   // ── Écoute expiration de session (déclenchée par l'intercepteur fetch) ──
   React.useEffect(() => {
@@ -201,13 +328,52 @@ export default function App() {
       if (notifRef.current) { notifRef.current.close(); }
       toast.error("Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.", { duration: 8000 });
     };
+    // Un autre onglet de CE navigateur s'est connecté avec un compte différent :
+    // le cookie auth_token (partagé par tous les onglets) a été remplacé sous
+    // les pieds de cet onglet, qui affichait encore l'ancien utilisateur alors
+    // que le serveur n'aurait plus authentifié ses requêtes que sous le nouveau.
+    const onIdentityMismatch = () => {
+      setUser(null);
+      if (notifRef.current) { notifRef.current.close(); }
+      toast.error("Un autre compte a été connecté dans ce navigateur. Veuillez vous reconnecter.", { duration: 8000 });
+    };
     window.addEventListener("helios:session-expired", onExpired);
     window.addEventListener("helios:session-replaced", onReplaced);
+    window.addEventListener("helios:identity-mismatch", onIdentityMismatch);
     return () => {
       window.removeEventListener("helios:session-expired", onExpired);
       window.removeEventListener("helios:session-replaced", onReplaced);
+      window.removeEventListener("helios:identity-mismatch", onIdentityMismatch);
     };
   }, []);
+
+  // ── Vérifie que l'identité de cet onglet correspond toujours au cookie ──
+  // auth_token réel du navigateur (partagé entre tous les onglets). À utiliser
+  // au montage et quand l'onglet redevient visible, pour détecter rapidement
+  // qu'un autre onglet s'est connecté avec un compte différent.
+  const verifyIdentity = React.useCallback(async () => {
+    const storedUser = sessionStorage.getItem("helios_user");
+    if (!storedUser) return;
+    try {
+      const res = await originalFetch("/api/auth/me", { credentials: "include" });
+      if (!res.ok) return; // 401 : laissé au flux refresh/expiration existant
+      const data = await res.json();
+      const cachedId = JSON.parse(storedUser)?.id;
+      if (data.user?.id && cachedId && data.user.id !== cachedId) {
+        sessionStorage.removeItem("helios_user");
+        window.dispatchEvent(new CustomEvent("helios:identity-mismatch"));
+      }
+    } catch {}
+  }, []);
+
+  React.useEffect(() => {
+    if (!user) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") verifyIdentity();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [user, verifyIdentity]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -225,18 +391,9 @@ export default function App() {
           return;
         }
         const id = ++notifIdRef.current;
-        let message: string;
-        if (event.type === "audit_log") {
-          const label = AUDIT_ACTION_LABELS[event.payload?.action] || event.payload?.action || "a effectué une action";
-          message = `📋 ${event.payload?.userName || "Quelqu'un"} ${label}`;
-        } else if (event.type === "equipment_critical") {
-          message = `⚠️ ${event.payload?.message || "Équipement passé en état critique"}`;
-        } else if (event.type === "stock_alerte") {
-          message = `📉 Stock bas — ${event.payload?.name || "Équipement"} (${event.payload?.new_stock} ${event.payload?.unite || ""})`;
-        } else {
-          message = `📦 Équipement créé`;
-        }
-        setNotifications(prev => [{ id, message, type: event.type, read: false }, ...prev].slice(0, 50));
+        const message = buildNotificationMessage(event);
+        const created_at = new Date().toISOString();
+        setNotifications(prev => [{ id, message, type: event.type, read: false, payload: event.payload, created_at }, ...prev].slice(0, 50));
       } catch {}
     };
     return () => { es.close(); };
@@ -251,9 +408,18 @@ export default function App() {
       const storedUser = sessionStorage.getItem("helios_user");
       if (storedUser) {
         try {
-          const check = await fetch("/api/health", { credentials: "include" });
+          const check = await fetch("/api/auth/me", { credentials: "include" });
           if (check.ok) {
-            setUser(JSON.parse(storedUser));
+            const meData = await check.json();
+            const cached = JSON.parse(storedUser);
+            if (meData.user?.id && meData.user.id !== cached.id) {
+              // Un autre onglet de ce navigateur est connecté avec un compte
+              // différent — le cookie partagé ne correspond plus à ce qui est
+              // affiché ici, ne pas ré-afficher l'ancien utilisateur.
+              sessionStorage.removeItem("helios_user");
+            } else {
+              setUser(cached);
+            }
           } else if (check.status === 401) {
             // Token expiré → tenter refresh silencieux avant de déconnecter
             try {
@@ -299,6 +465,9 @@ export default function App() {
             roles: [
               { id: "admin",                      label: "Administrateur" },
               { id: "chef_service_administratif", label: "Chef Service Administratif" },
+              { id: "chef_bureau",                label: "Chef de Bureau" },
+              { id: "chef_ram",                   label: "Chef RAM" },
+              { id: "com_zone",                   label: "COM Zone" },
               { id: "agent_logistique",           label: "Agent Logistique" },
               { id: "csph",                       label: "Chef Suivi Projet HELIOS" },
             ],
@@ -392,6 +561,45 @@ export default function App() {
   const userDisplayName = getDisplayName(user);
   const isAdmin         = ["admin"].includes(currentRole);
   const isSupervisor    = ["chef_service_administratif", "csph"].includes(currentRole);
+  const isComZone       = currentRole === "com_zone";
+  const isChefRam       = currentRole === "chef_ram";
+  const canActOnAlerts  = ["admin", "chef_bureau", "chef_service_administratif"].includes(currentRole);
+
+  function openAlertDetail(n: { type: string; payload?: any; created_at?: string }) {
+    const isActionable = canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type);
+    const isReadonly   = READONLY_DETAIL_TYPES.includes(n.type);
+    if (!isActionable && !isReadonly) return;
+    setAlertNote("");
+    setAlertDetail({ type: n.type, payload: n.payload, created_at: n.created_at });
+  }
+
+  async function handleAlertDecision(action: "approve" | "reject" | "fulfill") {
+    if (!alertDetail) return;
+    setAlertActionLoading(true);
+    try {
+      const url = alertDetail.type === "resupply_needed"
+        ? `/api/resupply-requests/${alertDetail.payload.requestId}/fulfill`
+        : `/api/stock-declarations/${alertDetail.payload.declarationId}/${action}`;
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: alertNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(
+        action === "fulfill" ? "Ravitaillement marqué effectif"
+        : action === "approve" ? "Déclaration approuvée"
+        : "Déclaration rejetée"
+      );
+      setAlertDetail(null);
+    } catch (e: any) {
+      toast.error(e.message || "Erreur de connexion");
+    } finally {
+      setAlertActionLoading(false);
+    }
+  }
 
   // ── Gradient supervisor selon dark mode ───────────────
   const supervisorBg = darkMode
@@ -411,8 +619,13 @@ export default function App() {
       icon: <Archive size={17} />,
       children: categories
         .filter(cat => {
+          const l = cat.label.toLowerCase();
+          // Com Zone : catégories gérées via des flux dédiés (Rame/Matériel
+          // d'exploitation via ComZoneDashboard) ou non pertinentes pour ce rôle
+          // (Cuisine, Outillage) — masquées du menu générique pour ce rôle seulement.
+          if (currentRole === "com_zone" && (l.includes("cuisine") || l.includes("exploitation") || l.includes("outillage") || l.includes("rame"))) return false;
           // L'agent logistique ne voit pas la catégorie Armement dans le menu
-          if (currentRole === "agent_logistique" && cat.label.toLowerCase().includes("armement")) return false;
+          if (currentRole === "agent_logistique" && l.includes("armement")) return false;
           return true;
         })
         .map(cat => ({
@@ -428,6 +641,16 @@ export default function App() {
       icon: <ArrowLeftRight size={17} />,
     },
   ];
+
+  // Le chef de bureau accède aux approbations (déclarations de stock / ravitaillements)
+  // depuis la sidebar standard — la CSA y accède via un onglet dans SupervisionDashboard.
+  if (currentRole === "chef_bureau") {
+    navItems.push({
+      id: "approbations",
+      label: "Approbations",
+      icon: <ClipboardCheck size={17} />,
+    });
+  }
 
   function toggleGroup(id: string) {
     setExpandedGroups(prev => {
@@ -449,10 +672,15 @@ export default function App() {
           isBypass={false}
           zones={dynamicSettings?.zones ?? []}
           stations={(dynamicSettings?.stations ?? []) as any}
+          userZoneId={user?.zoneId}
         />
       );
     }
+    if (activeMenu === "approbations" && currentRole === "chef_bureau") {
+      return <ApprobationsPanel />;
+    }
     if (activeMenu === "dashboard") {
+      if (isComZone) return <ComZoneDashboard />;
       return (
         <EquipmentDashboard
           isBypass={false}
@@ -492,6 +720,98 @@ export default function App() {
           {/* ══ LAYOUT SUPERVISOR (CSA + CSPH) ══ */}
           {isSupervisor ? (
             <div
+              className="flex-1 min-w-0 flex flex-col min-h-screen supervisor-layout"
+              style={{ background: supervisorBg }}
+            >
+              <header className="bg-white/80 backdrop-blur border-b border-slate-200/80 px-4 sm:px-8 py-3 sm:py-4 flex items-center justify-between flex-wrap gap-y-2 gap-x-4 sticky top-0 z-50 shadow-sm">
+                <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                  <img src="/logo.jpg" alt="Helios Logo" className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl shadow-md shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-black tracking-[3px] text-slate-900 uppercase leading-tight">HELIOS</div>
+                    <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase truncate">Système de supervision</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-3">
+                  <div className="hidden sm:block text-right">
+                    <div className="text-sm font-black text-slate-800 leading-tight">{userDisplayName}</div>
+                    <div className="text-[10px] text-slate-400 font-bold">
+                      {dynamicSettings?.roles?.find((r: any) => r.id === currentRole)?.label || "Superviseur"}
+                    </div>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-500 flex items-center justify-center text-white font-black text-sm shadow shrink-0">
+                    {getInitial(user)}
+                  </div>
+                  {/* 🔔 Cloche notifications (journal global) */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
+                      className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
+                      title="Notifications"
+                    >
+                      <Bell size={18} />
+                      {unreadCount > 0 && (
+                        <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                          {unreadCount > 9 ? "9+" : unreadCount}
+                        </span>
+                      )}
+                    </button>
+                    {showNotifs && (
+                      <div className="absolute right-0 top-11 w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg z-50">
+                        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                          <span className="text-xs font-black text-slate-700">Notifications</span>
+                          <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                          {notifications.length === 0 ? (
+                            <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
+                          ) : notifications.map(n => {
+                            const clickable = (canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type)) || READONLY_DETAIL_TYPES.includes(n.type);
+                            return (
+                              <div key={n.id}
+                                onClick={() => openAlertDetail(n)}
+                                className={`px-4 py-2.5 text-xs ${
+                                  ["equipment_critical", "resupply_needed", "stock_declaration_created"].includes(n.type)
+                                    ? "bg-red-50 text-red-700"
+                                    : "text-slate-700"
+                                } ${clickable ? "cursor-pointer hover:brightness-95 transition-all" : ""}`}>
+                                {n.message}
+                                {clickable && <span className="block text-[10px] font-bold opacity-70 mt-0.5">Cliquer pour voir le détail →</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setDarkMode(d => !d)}
+                    className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                    title={darkMode ? "Mode clair" : "Mode sombre"}
+                  >
+                    {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-red-500 px-2 sm:px-3 py-2 rounded-lg hover:bg-red-50 border border-transparent hover:border-red-100 transition-all"
+                  >
+                    <LogOut size={14} /><span className="hidden sm:inline">Déconnexion</span>
+                  </button>
+                </div>
+              </header>
+              <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto">
+                <ErrorBoundary>
+                  <SupervisionDashboard isBypass={false} />
+                </ErrorBoundary>
+              </main>
+              <footer className="py-4 px-4 sm:px-8 border-t border-slate-200/80 bg-white/60 text-center">
+                <p className="text-[10px] text-slate-300 font-medium tracking-widest uppercase">
+                  HELIOS · Gestion G-Logistique v1.2 · Accès Superviseur — {new Date().getFullYear()}
+                </p>
+              </footer>
+            </div>
+          ) : isChefRam ? (
+            /* ══ LAYOUT CHEF RAM (véhicules uniquement, sans sidebar) ══ */
+            <div
               className="flex-1 flex flex-col min-h-screen supervisor-layout"
               style={{ background: supervisorBg }}
             >
@@ -500,12 +820,12 @@ export default function App() {
                   <img src="/logo.jpg" alt="Helios Logo" className="w-10 h-10 rounded-xl shadow-md" />
                   <div>
                     <div className="text-sm font-black tracking-[3px] text-slate-900 uppercase leading-tight">HELIOS</div>
-                    <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase">Système de supervision</div>
+                    <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase">Chef RAM</div>
                   </div>
                   <div className="ml-4 pl-4 border-l border-slate-200">
                     <div className="text-[10px] font-black text-accent uppercase tracking-widest flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
-                      Tableau de bord — Lecture seule
+                      <Car size={12} />
+                      Parc véhicules uniquement
                     </div>
                   </div>
                 </div>
@@ -513,13 +833,13 @@ export default function App() {
                   <div className="text-right">
                     <div className="text-sm font-black text-slate-800 leading-tight">{userDisplayName}</div>
                     <div className="text-[10px] text-slate-400 font-bold">
-                      {dynamicSettings?.roles?.find((r: any) => r.id === currentRole)?.label || "Superviseur"}
+                      {dynamicSettings?.roles?.find((r: any) => r.id === currentRole)?.label || "Chef RAM"}
                     </div>
                   </div>
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-500 flex items-center justify-center text-white font-black text-sm shadow">
                     {getInitial(user)}
                   </div>
-                  {/* 🔔 Cloche notifications (journal global) */}
+                  {/* 🔔 Cloche notifications */}
                   <div className="relative">
                     <button
                       onClick={() => { setShowNotifs(v => !v); if (!showNotifs) markAllRead(); }}
@@ -542,11 +862,21 @@ export default function App() {
                         <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                           {notifications.length === 0 ? (
                             <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
-                          ) : notifications.map(n => (
-                            <div key={n.id} className={`px-4 py-2.5 text-xs ${n.type === "equipment_critical" ? "bg-red-50 text-red-700" : "text-slate-700"}`}>
-                              {n.message}
-                            </div>
-                          ))}
+                          ) : notifications.map(n => {
+                            const clickable = READONLY_DETAIL_TYPES.includes(n.type);
+                            return (
+                              <div key={n.id}
+                                onClick={() => openAlertDetail(n)}
+                                className={`px-4 py-2.5 text-xs ${
+                                  n.type === "equipment_critical" || n.type === "equipment_repaired"
+                                    ? "bg-red-50 text-red-700"
+                                    : "text-slate-700"
+                                } ${clickable ? "cursor-pointer hover:brightness-95 transition-all" : ""}`}>
+                                {n.message}
+                                {clickable && <span className="block text-[10px] font-bold opacity-70 mt-0.5">Cliquer pour voir le détail →</span>}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -568,12 +898,12 @@ export default function App() {
               </header>
               <main className="flex-1 p-8 overflow-auto">
                 <ErrorBoundary>
-                  <SupervisionDashboard isBypass={false} />
+                  <ChefRamDashboard />
                 </ErrorBoundary>
               </main>
               <footer className="py-4 px-8 border-t border-slate-200/80 bg-white/60 text-center">
                 <p className="text-[10px] text-slate-300 font-medium tracking-widest uppercase">
-                  HELIOS · Gestion G-Logistique v1.2 · Accès Superviseur — {new Date().getFullYear()}
+                  HELIOS · Gestion G-Logistique v1.2 · Accès Chef RAM — {new Date().getFullYear()}
                 </p>
               </footer>
             </div>
@@ -700,11 +1030,21 @@ export default function App() {
                             <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                               {notifications.length === 0 ? (
                                 <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
-                              ) : notifications.map(n => (
-                                <div key={n.id} className={`px-4 py-2.5 text-xs ${n.type === "equipment_critical" ? "bg-red-50 text-red-700" : "text-slate-700"}`}>
-                                  {n.message}
-                                </div>
-                              ))}
+                              ) : notifications.map(n => {
+                                const clickable = (canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type)) || READONLY_DETAIL_TYPES.includes(n.type);
+                                return (
+                                  <div key={n.id}
+                                    onClick={() => openAlertDetail(n)}
+                                    className={`px-4 py-2.5 text-xs ${
+                                      ["equipment_critical", "resupply_needed", "stock_declaration_created"].includes(n.type)
+                                        ? "bg-red-50 text-red-700"
+                                        : "text-slate-700"
+                                    } ${clickable ? "cursor-pointer hover:brightness-95 transition-all" : ""}`}>
+                                    {n.message}
+                                    {clickable && <span className="block text-[10px] font-bold opacity-70 mt-0.5">Cliquer pour voir le détail →</span>}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -819,6 +1159,114 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Détail d'alerte cliquable (chef_bureau / CSA / admin) : voir + accepter/refuser ── */}
+      <Dialog open={!!alertDetail} onOpenChange={open => { if (!open) setAlertDetail(null); }}>
+        <DialogContent className="sm:max-w-[420px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          {alertDetail?.type === "stock_declaration_created" && (
+            <>
+              <div className="bg-gradient-to-br from-amber-600 to-amber-500 text-white px-6 py-5">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-black text-white">Écart de stock signalé</DialogTitle>
+                  <DialogDescription className="text-amber-50 text-xs mt-0.5 font-medium">
+                    {alertDetail.payload?.equipmentName}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div className="flex items-center justify-center gap-3 px-4 py-3 rounded-xl border bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700">
+                  <span className="text-lg font-black text-slate-400">{alertDetail.payload?.previousQuantity}</span>
+                  <span className="text-slate-300">→</span>
+                  <span className="text-lg font-black text-amber-600">{alertDetail.payload?.declaredQuantity} {alertDetail.payload?.unite || ""}</span>
+                </div>
+                <Input
+                  placeholder="Note (optionnel)"
+                  value={alertNote}
+                  onChange={e => setAlertNote(e.target.value)}
+                  className="h-9 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </div>
+              <DialogFooter className="px-6 pb-5 flex gap-3">
+                <Button variant="outline" className="flex-1 border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950/30"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("reject")}>
+                  Rejeter
+                </Button>
+                <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("approve")}>
+                  {alertActionLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : null}
+                  Approuver
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {(alertDetail?.type === "equipment_critical" || alertDetail?.type === "equipment_repaired") && (
+            <>
+              <div className={`bg-gradient-to-br text-white px-6 py-5 ${
+                alertDetail.type === "equipment_repaired" ? "from-emerald-600 to-emerald-500" : "from-red-700 to-red-600"
+              }`}>
+                <DialogHeader>
+                  <DialogTitle className="text-base font-black text-white">
+                    {alertDetail.type === "equipment_repaired" ? "Véhicule réparé" : "Alerte équipement"}
+                  </DialogTitle>
+                  {alertDetail.created_at && (
+                    <DialogDescription className="text-white/80 text-xs mt-0.5 font-medium">
+                      {new Date(alertDetail.created_at).toLocaleString("fr-FR")}
+                    </DialogDescription>
+                  )}
+                </DialogHeader>
+              </div>
+              <div className="px-6 py-5">
+                <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+                  {alertDetail.payload?.message || "Aucun détail supplémentaire."}
+                </p>
+              </div>
+              <DialogFooter className="px-6 pb-5">
+                <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setAlertDetail(null)}>
+                  Fermer
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {alertDetail?.type === "resupply_needed" && (
+            <>
+              <div className="bg-gradient-to-br from-orange-600 to-orange-500 text-white px-6 py-5">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-black text-white">Ravitaillement nécessaire</DialogTitle>
+                  <DialogDescription className="text-orange-50 text-xs mt-0.5 font-medium">
+                    {alertDetail.payload?.name}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div className="flex items-center justify-between px-4 py-3 rounded-xl border bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700">
+                  <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Stock actuel</span>
+                  <span className="text-lg font-black text-orange-600">
+                    {alertDetail.payload?.quantity} <span className="text-sm font-bold">{alertDetail.payload?.unite || ""}</span>
+                  </span>
+                </div>
+                <Input
+                  placeholder="Note (optionnel)"
+                  value={alertNote}
+                  onChange={e => setAlertNote(e.target.value)}
+                  className="h-9 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </div>
+              <DialogFooter className="px-6 pb-5 flex gap-3">
+                <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setAlertDetail(null)} disabled={alertActionLoading}>
+                  Fermer
+                </Button>
+                <Button className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("fulfill")}>
+                  {alertActionLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : null}
+                  Marquer ravitaillé
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

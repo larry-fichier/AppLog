@@ -30,7 +30,14 @@ interface Movement {
   // ✅ Nouvelles colonnes terrain
   date_deploiement?: string;
   date_retour_prevue?: string;
+  status?: "pending" | "approved" | "rejected";
+  decision_note?: string;
 }
+
+const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  pending:  { label: "En attente d'approbation", cls: "bg-amber-50 text-amber-700" },
+  rejected: { label: "Rejeté",                    cls: "bg-red-50 text-red-700" },
+};
 
 function formatDate(iso?: string) {
   if (!iso) return null;
@@ -102,7 +109,15 @@ export function MovementHistory({ equipmentId }: { equipmentId: string }) {
                       {mv.reference}
                     </span>
                   )}
+                  {mv.status && mv.status !== "approved" && STATUS_LABEL[mv.status] && (
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${STATUS_LABEL[mv.status].cls}`}>
+                      {STATUS_LABEL[mv.status].label}
+                    </span>
+                  )}
                 </div>
+                {mv.status === "rejected" && mv.decision_note && (
+                  <p className="text-[11px] text-red-500 italic">« {mv.decision_note} »</p>
+                )}
 
                 {/* Trajet zone/station */}
                 {(mv.from_zone_name || mv.to_zone_name) && (

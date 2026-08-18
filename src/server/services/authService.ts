@@ -42,6 +42,7 @@ export class AuthService {
         username:    user.username,
         displayName: user.display_name,
         role:        user.role,
+        zoneId:      user.zone_id,
       }
     };
   }

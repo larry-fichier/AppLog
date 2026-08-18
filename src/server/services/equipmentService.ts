@@ -2,19 +2,39 @@ import { query } from '../db.ts';
 
 export class EquipmentService {
   /**
-   * Liste tous les équipements actifs avec leurs détails de localisation
+   * Liste tous les équipements actifs avec leurs détails de localisation.
+   * filter.zoneId  → restreint aux équipements de cette zone (rôle com_zone)
+   * filter.vehicleOnly → restreint aux catégories véhicule/rame (rôle chef_ram)
    */
-  static async getAllEquipment() {
+  static async getAllEquipment(filter?: { zoneId?: string; vehicleOnly?: boolean; hideZoneStock?: boolean }) {
+    const conditions: string[] = ['e.deleted_at IS NULL'];
+    const params: any[] = [];
+    if (filter?.zoneId) {
+      params.push(filter.zoneId);
+      conditions.push(`e.zone_id = $${params.length}`);
+    }
+    if (filter?.vehicleOnly) {
+      conditions.push(`(c.label ILIKE '%véhicule%' OR c.label ILIKE '%vehicule%' OR c.label ILIKE '%rame%' OR c.label ILIKE '%automobile%')`);
+    }
+    if (filter?.hideZoneStock) {
+      // Le "Matériel d'exploitation" existe en 2 niveaux : un article catalogue
+      // central (zone SERVICE_ADMINISTRATIF, référence gérée par le chef de
+      // bureau) et une instance de stock par zone (créée quand un com_zone
+      // déclare son stock). Les instances de zone ne comptent pas comme stock
+      // du magasin central — on ne les affiche que dans le parc propre de la
+      // zone concernée.
+      conditions.push(`NOT (c.label ILIKE '%exploitation%' AND e.zone_id IS NOT NULL AND e.zone_id != (SELECT id FROM zones WHERE name = 'SERVICE_ADMINISTRATIF'))`);
+    }
     const result = await query(`
-      SELECT e.*, c.code as category_code, c.label as category_label, 
+      SELECT e.*, c.code as category_code, c.label as category_label,
              z.name as zone_name, s.name as station_name
       FROM equipment e
       LEFT JOIN categories c ON e.category_id = c.id
       LEFT JOIN zones z ON e.zone_id = z.id
       LEFT JOIN stations s ON e.station_id = s.id
-      WHERE e.deleted_at IS NULL
+      WHERE ${conditions.join(' AND ')}
       ORDER BY e.created_at DESC
-    `);
+    `, params);
     return result.rows;
   }
 

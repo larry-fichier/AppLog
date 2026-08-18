@@ -79,7 +79,14 @@ async function startServer() {
     ];
     for (const cat of seedCategories) {
       try {
-        const exists = await query('SELECT 1 FROM categories WHERE code = $1', [cat.code]);
+        // Vérifie par code ET par libellé (insensible à la casse) : un code différent
+        // ne doit pas suffire à recréer un doublon si le libellé existe déjà — c'est
+        // exactement ce qui a fait réapparaître "Matériel d'exploitation" en double
+        // à chaque redémarrage après suppression manuelle de l'ancien code orphelin.
+        const exists = await query(
+          'SELECT 1 FROM categories WHERE code = $1 OR LOWER(label) = LOWER($2)',
+          [cat.code, cat.label]
+        );
         if (exists.rows.length === 0) {
           await query(
             'INSERT INTO categories (code, label) VALUES ($1, $2)',

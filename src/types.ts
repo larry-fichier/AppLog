@@ -1,9 +1,12 @@
-export type UserRole = 
-  | "admin" 
-  
-  | "agent_logistique" 
-  | "csph" 
-  | "chef_service_administratif";
+export type UserRole =
+  | "admin"
+
+  | "agent_logistique"
+  | "csph"
+  | "chef_service_administratif"
+  | "chef_bureau"
+  | "chef_ram"
+  | "com_zone";
 
 export interface AppUser {
   uid: string;
@@ -14,7 +17,7 @@ export interface AppUser {
 }
 
 export type EquipmentCategory = "rame" | "cuisine" | "electronique" | "groupe" | string;
-export type EquipmentStatus = "fonctionnel" | "en_reparation" | "hors_service";
+export type EquipmentStatus = "fonctionnel" | "en_reparation" | "hors_service" | "declasse" | "reforme";
 
 export interface EquipmentLocation {
   zone: string; // This was the Secteur but now Secteur is gone, so this is Zone (Service)

@@ -1,9 +1,19 @@
 import { apiFetch } from "@/lib/api";
 import { useState, useEffect } from "react";
-import { ArrowLeftRight, Search, Filter, Loader2, Pencil } from "lucide-react";
+import { ArrowLeftRight, Search, Filter, Loader2, Pencil, FileDown } from "lucide-react";
 import { ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal, Truck } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle } from "lucide-react";
 import { MovementDialog } from "./MovementDialog";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { buildReportHtml, openReportPrintWindow, tableRows, renderTable } from "@/lib/reportTemplate";
+
+const MOVEMENTS_PAGE_SIZE = 10;
+
+function isVehicleCategory(label: string = ""): boolean {
+  const l = label.toLowerCase();
+  return l.includes("rame") || l.includes("véhicule") || l.includes("vehicule") || l.includes("automobile");
+}
 
 const TYPE_META = {
   entree:      { label: 'Entrée',      Icon: ArrowDown,         cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -20,34 +30,79 @@ interface Movement {
   equipment_name?: string; equipment_id: string;
   from_zone_name?: string; from_station_name?: string;
   to_zone_name?: string;   to_station_name?: string;
+  to_zone_id?: string;     to_station_id?: string;
   previous_status?: string; new_status?: string;
   note?: string; reference?: string;
   date_deploiement?: string; date_retour_prevue?: string;
+  status?: "pending" | "approved" | "rejected";
+  decision_note?: string;
 }
+
+const STATUS_META = {
+  pending:  { label: "En attente d'approbation", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  rejected: { label: "Rejeté",                    cls: "bg-red-50 text-red-700 border-red-200" },
+} as const;
 
 interface Props {
   activeRole?: string;
   isBypass?: boolean;
   zones: { id: string; label: string }[];
   stations: { id: string; label: string; zoneId: string }[];
+  userZoneId?: string;
 }
 
-export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) {
+export function MovementsPage({ activeRole, isBypass, zones, stations, userZoneId }: Props) {
   const [rows, setRows]           = useState<Movement[]>([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState("");
   const [filterType, setFilterType] = useState<string>("all");
+  const [dateFrom, setDateFrom]   = useState("");
+  const [dateTo, setDateTo]       = useState("");
   const [isDialogOpen, setIsDialogOpen]         = useState(false);
   const [selectedEquip, setSelectedEquip]         = useState<any | null>(null);
   const [editingMovement, setEditingMovement]     = useState<any | null>(null);
   const [equipment, setEquipment]                 = useState<any[]>([]);
 
-  const canEdit = ["agent_logistique", "admin"].includes(activeRole || "");
+  const canEdit = ["agent_logistique", "admin", "com_zone"].includes(activeRole || "");
+  const canApprove = ["admin", "chef_bureau", "chef_service_administratif"].includes(activeRole || "");
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+
+  async function decideMovement(id: string, action: "approve" | "reject") {
+    let note: string | undefined;
+    if (action === "reject") {
+      const reason = window.prompt("Motif du rejet (obligatoire) :")?.trim();
+      if (!reason) {
+        if (reason === "") toast.error("Un motif est obligatoire pour rejeter un transfert.");
+        return;
+      }
+      note = reason;
+    }
+    setDecidingId(id);
+    try {
+      const res = await apiFetch(`/api/movements/${id}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(action === "approve" ? "Transfert approuvé" : "Transfert rejeté");
+      fetchMovements();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setDecidingId(null);
+    }
+  }
 
   async function fetchMovements() {
     setLoading(true);
     try {
-      const res = await apiFetch('/api/movements');
+      const qs = new URLSearchParams();
+      if (dateFrom) qs.set('from', dateFrom);
+      if (dateTo) qs.set('to', dateTo);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      const res = await apiFetch(`/api/movements${suffix}`);
       if (res.ok) setRows(await res.json());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -60,10 +115,51 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
     } catch (e) { console.error(e); }
   }
 
-  useEffect(() => {
-    fetchMovements();
-    fetchEquipment();
-  }, []);
+  useEffect(() => { fetchEquipment(); }, []);
+  useEffect(() => { fetchMovements(); }, [dateFrom, dateTo]);
+
+  function handleGenerateReport() {
+    if (!dateFrom || !dateTo) { toast.error("Sélectionnez une période (du / au) pour générer le rapport"); return; }
+    const periodMovements = rows.filter(mv => mv.type === "entree" || mv.type === "sortie");
+    const entrees = periodMovements.filter(mv => mv.type === "entree").length;
+    const sorties = periodMovements.filter(mv => mv.type === "sortie").length;
+
+    const kpiHtml = `<div class="kpis" style="grid-template-columns: repeat(3, 1fr)">
+      <div class="kpi"><div class="kpi-val" style="color:#22c55e">${entrees}</div><div class="kpi-lbl">Entrées</div></div>
+      <div class="kpi"><div class="kpi-val" style="color:#ef4444">${sorties}</div><div class="kpi-lbl">Sorties</div></div>
+      <div class="kpi"><div class="kpi-val">${periodMovements.length}</div><div class="kpi-lbl">Total mouvements</div></div>
+    </div>`;
+
+    const sorted = periodMovements
+      .slice()
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const bodyHtml = tableRows(
+      sorted.map(mv => [
+        new Date(mv.created_at).toLocaleDateString("fr-FR"),
+        TYPE_META[mv.type as keyof typeof TYPE_META]?.label || mv.type,
+        mv.equipment_name || mv.equipment_id.substring(0, 8),
+        [mv.from_zone_name, mv.to_zone_name].filter(Boolean).join(" → ") || "—",
+        mv.performed_by_name || "—",
+        mv.note || mv.reference || "—",
+      ])
+    );
+    const tableHtml = renderTable(["Date", "Type", "Équipement", "Trajet", "Agent", "Référence / Note"], bodyHtml);
+
+    const zoneLabel = activeRole === "com_zone"
+      ? (zones.find(z => z.id === userZoneId)?.label || "Ma zone")
+      : "Toutes zones";
+
+    const html = buildReportHtml({
+      docTitle: "État des entrées / sorties",
+      docSubtitle: `${zoneLabel} · Période du ${new Date(dateFrom).toLocaleDateString("fr-FR")} au ${new Date(dateTo).toLocaleDateString("fr-FR")}`,
+      sections: [
+        { title: "Résumé", html: kpiHtml },
+        { title: "Détail des mouvements", html: tableHtml },
+      ],
+      signatureTitle: activeRole === "com_zone" ? "Le COM Zone" : "Le Chef de Bureau",
+    });
+    openReportPrintWindow(html);
+  }
 
   const filtered = rows.filter(mv => {
     const matchType   = filterType === "all" || mv.type === filterType;
@@ -74,6 +170,17 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
       || mv.to_zone_name?.toLowerCase().includes(search.toLowerCase());
     return matchType && matchSearch;
   });
+
+  const [movementsPage, setMovementsPage] = useState(1);
+  const movementsTotalPages = Math.max(1, Math.ceil(filtered.length / MOVEMENTS_PAGE_SIZE));
+  useEffect(() => {
+    if (movementsPage > movementsTotalPages) setMovementsPage(movementsTotalPages);
+  }, [movementsTotalPages, movementsPage]);
+  useEffect(() => { setMovementsPage(1); }, [search, filterType]);
+  const paginatedFiltered = filtered.slice(
+    (movementsPage - 1) * MOVEMENTS_PAGE_SIZE,
+    movementsPage * MOVEMENTS_PAGE_SIZE
+  );
 
   // Compteurs par type
   const counts = Object.fromEntries(
@@ -92,7 +199,34 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
           </div>
           <h2 className="text-xl font-extrabold text-text-dark">Journal des Mouvements</h2>
         </div>
-        {canEdit && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-white border border-border-custom rounded-lg px-2 h-10">
+            <span className="text-[10px] font-black text-zinc-400 uppercase">Du</span>
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={e => setDateFrom(e.target.value)}
+              className="text-xs border-none focus:outline-none bg-transparent"
+            />
+            <span className="text-[10px] font-black text-zinc-400 uppercase">Au</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={e => setDateTo(e.target.value)}
+              className="text-xs border-none focus:outline-none bg-transparent"
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="h-10 px-4 text-xs font-black border-border-custom"
+            onClick={handleGenerateReport}
+          >
+            <FileDown className="w-3.5 h-3.5 mr-2" />
+            Rapport entrées/sorties
+          </Button>
+          {canEdit && (
           <Button
             className="bg-slate-900 hover:bg-brand-orange text-white font-black h-10 px-5 text-xs"
             onClick={() => { setSelectedEquip(null); setIsDialogOpen(true); }}
@@ -100,7 +234,8 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
             <ArrowLeftRight className="w-3.5 h-3.5 mr-2" />
             Nouveau mouvement
           </Button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Stat pills par type */}
@@ -171,7 +306,7 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
                     Aucun mouvement trouvé
                   </td>
                 </tr>
-              ) : filtered.map(mv => {
+              ) : paginatedFiltered.map(mv => {
                 const meta = TYPE_META[mv.type as keyof typeof TYPE_META];
                 const Icon = meta?.Icon;
                 return (
@@ -200,6 +335,14 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
                           ? <span>{mv.to_zone_name}{mv.to_station_name && ` / ${mv.to_station_name}`}</span>
                           : <span className="italic text-zinc-300">—</span>}
                       </p>
+                      {mv.status && mv.status !== "approved" && (
+                        <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-black border ${STATUS_META[mv.status].cls}`}>
+                          {STATUS_META[mv.status].label}
+                        </span>
+                      )}
+                      {mv.status === "rejected" && mv.decision_note && (
+                        <p className="text-[10px] text-red-500 italic mt-0.5">« {mv.decision_note} »</p>
+                      )}
                       {/* Dates déploiement */}
                       {mv.date_deploiement && (
                         <p className="text-[10px] text-orange-500 mt-0.5 font-bold">
@@ -242,18 +385,39 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
 
                     {/* Actions */}
                     <td className="px-5 py-3.5 text-right">
-                      <Button
-                        variant="outline" size="sm"
-                        className="h-7 px-3 text-[10px] font-black gap-1 border-amber-200 text-amber-600 hover:bg-amber-50 hover:border-amber-400"
-                        onClick={() => {
-                          const equip = equipment.find(e => e.id === mv.equipment_id);
-                          setSelectedEquip(equip || { id: mv.equipment_id, name: mv.equipment_name || mv.equipment_id, zone_id: mv.to_zone_id, station_id: mv.to_station_id, status: mv.new_status });
-                          setEditingMovement(mv);
-                          setIsDialogOpen(true);
-                        }}
-                      >
-                        <Pencil size={10} />Modifier
-                      </Button>
+                      {canApprove && mv.status === "pending" ? (
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-3 text-[10px] font-black gap-1 border-emerald-200 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-400"
+                            disabled={decidingId === mv.id}
+                            onClick={() => decideMovement(mv.id, "approve")}
+                          >
+                            <CheckCircle2 size={10} />Approuver
+                          </Button>
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-3 text-[10px] font-black gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-400"
+                            disabled={decidingId === mv.id}
+                            onClick={() => decideMovement(mv.id, "reject")}
+                          >
+                            <XCircle size={10} />Rejeter
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline" size="sm"
+                          className="h-7 px-3 text-[10px] font-black gap-1 border-amber-200 text-amber-600 hover:bg-amber-50 hover:border-amber-400"
+                          onClick={() => {
+                            const equip = equipment.find(e => e.id === mv.equipment_id);
+                            setSelectedEquip(equip || { id: mv.equipment_id, name: mv.equipment_name || mv.equipment_id, zone_id: mv.to_zone_id, station_id: mv.to_station_id, status: mv.new_status });
+                            setEditingMovement(mv);
+                            setIsDialogOpen(true);
+                          }}
+                        >
+                          <Pencil size={10} />Modifier
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -261,6 +425,23 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
             </tbody>
           </table>
         </div>
+        {filtered.length > MOVEMENTS_PAGE_SIZE && (
+          <div className="px-5 py-3 border-t border-border-custom flex items-center justify-between">
+            <span className="text-[10px] text-zinc-400 font-bold">
+              Page {movementsPage} / {movementsTotalPages} — {filtered.length} mouvement{filtered.length > 1 ? "s" : ""}
+            </span>
+            <div className="flex gap-1.5">
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs" disabled={movementsPage <= 1}
+                onClick={() => setMovementsPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft size={14} />
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs" disabled={movementsPage >= movementsTotalPages}
+                onClick={() => setMovementsPage(p => Math.min(movementsTotalPages, p + 1))}>
+                <ChevronRight size={14} />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dialog sélection équipement */}
@@ -351,8 +532,11 @@ export function MovementsPage({ activeRole, isBypass, zones, stations }: Props) 
           currentStatus={selectedEquip.status}
           zones={zones}
           stations={stations}
+          isVehicle={isVehicleCategory(selectedEquip.category_label)}
           onSuccess={fetchMovements}
           editingMovement={editingMovement}
+          lockedZoneId={activeRole === "com_zone" ? userZoneId : undefined}
+          onlyTransfert={activeRole === "com_zone"}
         />
       )}
     </div>

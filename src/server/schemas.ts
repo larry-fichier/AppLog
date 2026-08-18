@@ -42,6 +42,64 @@ export const loginSchema = z.object({
   { message: "Email ou username requis" }
 );
 
+// ✅ Validation pour déclaration de stock COM Zone
+export const declareStockSchema = z.object({
+  quantite: z.number().int().min(0),
+  note:     z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour approbation d'une déclaration de stock / d'un transfert
+export const stockDecisionSchema = z.object({
+  note: z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour rejet — motif obligatoire, pour que le com_zone à
+// l'origine de la demande sache toujours pourquoi elle a été refusée.
+export const rejectDecisionSchema = z.object({
+  note: z.string().trim().min(1, "Un motif de rejet est obligatoire").max(500),
+});
+
+// ✅ Validation pour déclasser un équipement (hors service définitif, conservé
+// comme source de pièces détachées — reste actif/visible dans l'inventaire)
+export const declasserSchema = z.object({
+  note: z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour réformer un véhicule (remis à un ancien personnel — sort
+// définitivement du parc actif, seule la traçabilité est conservée)
+export const reformerSchema = z.object({
+  recipient: z.string().trim().min(1, "Le nom du destinataire est obligatoire").max(255),
+  note:      z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour déclarer une panne — description obligatoire, pour que
+// chef_ram / admin sachent quoi diagnostiquer sans devoir recontacter la zone.
+export const panneSchema = z.object({
+  description: z.string().trim().min(1, "La description de la panne est obligatoire").max(500),
+});
+
+// ✅ Validation pour signaler la réparation d'un véhicule — note optionnelle
+// (contrairement à la panne, il n'y a pas de dysfonctionnement à décrire).
+export const repareSchema = z.object({
+  note: z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour marquer un ravitaillement effectif
+export const fulfillResupplySchema = z.object({
+  fulfilled_quantity: z.number().int().min(0).nullish(),
+  note:                z.string().max(500).nullish(),
+});
+
+// ✅ Validation pour confirmation de réception d'un ravitaillement
+export const confirmResupplySchema = z.object({
+  quantite_recue: z.number().int().min(0),
+  note:           z.string().max(500).nullish(),
+});
+
 export type CreateEquipmentInput = z.infer<typeof createEquipmentSchema>;
 export type CreateMovementInput = z.infer<typeof createMovementSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type DeclareStockInput = z.infer<typeof declareStockSchema>;
+export type StockDecisionInput = z.infer<typeof stockDecisionSchema>;
+export type FulfillResupplyInput = z.infer<typeof fulfillResupplySchema>;
+export type ConfirmResupplyInput = z.infer<typeof confirmResupplySchema>;

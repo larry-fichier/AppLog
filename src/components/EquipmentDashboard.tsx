@@ -4,7 +4,7 @@ import {
   Loader2, Wrench, CheckCircle2, XCircle,
   FileText, Database, ShieldAlert,
   Archive, Box, Thermometer, Truck, MapPin,
-  ArrowLeftRight, AlertTriangle, PackageMinus, Package
+  ArrowLeftRight, AlertTriangle, PackageMinus, PackagePlus, Package, Recycle
 } from "lucide-react";
 import { Equipment, GlobalSettings } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -35,10 +35,20 @@ function isVehicleCategory(label: string = ""): boolean {
   return l.includes("rame") || l.includes("véhicule") || l.includes("vehicule") || l.includes("automobile");
 }
 
+// Catégories masquées du parc générique pour le rôle Com Zone uniquement —
+// Rame et Matériel d'exploitation sont gérées via ComZoneDashboard, Cuisine et
+// Outillage ne concernent pas ce rôle. Les autres rôles voient tout normalement.
+function isHiddenCategoryFor(activeRole: string | undefined, label: string = ""): boolean {
+  if (activeRole !== "com_zone") return false;
+  const l = label.toLowerCase();
+  return l.includes("cuisine") || l.includes("exploitation") || l.includes("outillage") || l.includes("rame");
+}
+
 const statusConfig: Record<string, { label: string; color: string; icon: JSX.Element }> = {
   fonctionnel:   { label: "Fonctionnel",   color: "text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-950 dark:border-emerald-800", icon: <CheckCircle2 className="w-3 h-3 mr-1" /> },
   en_reparation: { label: "En réparation", color: "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950 dark:border-amber-800",           icon: <Wrench className="w-3 h-3 mr-1" /> },
   hors_service:  { label: "Hors service",  color: "text-red-600 bg-red-50 border-red-100 dark:bg-red-950 dark:border-red-900",                     icon: <XCircle className="w-3 h-3 mr-1" /> },
+  declasse:      { label: "Déclassé",      color: "text-slate-500 bg-slate-100 border-slate-200 dark:bg-slate-800 dark:border-slate-600",           icon: <Recycle className="w-3 h-3 mr-1" /> },
 };
 
 function getStatusConfig(status: string) {
@@ -83,6 +93,15 @@ export function EquipmentDashboard({
   const [stockSortieZoneId, setStockSortieZoneId]   = useState("");
   const [stockSortieLoading, setStockSortieLoading] = useState(false);
 
+  const [stockEntreeItem, setStockEntreeItem]       = useState<any | null>(null);
+  const [stockEntreeQty, setStockEntreeQty]         = useState("1");
+  const [stockEntreeNote, setStockEntreeNote]       = useState("");
+  const [stockEntreeLoading, setStockEntreeLoading] = useState(false);
+
+  const [declasserItem, setDeclasserItem]       = useState<any | null>(null);
+  const [declasserNote, setDeclasserNote]       = useState("");
+  const [declasserLoading, setDeclasserLoading] = useState(false);
+
   function isExploitationItem(item: any): boolean {
     return /exploitation|mat.riel.d/i.test(item.category_label || "");
   }
@@ -120,7 +139,56 @@ export function EquipmentDashboard({
     }
   }
 
-  const canSeeArmement = ["admin", "chef_service_administratif", "csph"].includes(activeRole);
+  async function handleStockEntree() {
+    if (!stockEntreeItem) return;
+    const qty = parseInt(stockEntreeQty, 10);
+    if (isNaN(qty) || qty <= 0) { toast.error("Quantité invalide"); return; }
+    setStockEntreeLoading(true);
+    try {
+      const res = await apiFetch(`/api/equipment/${stockEntreeItem.id}/stock-entree`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantite: qty, note: stockEntreeNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`Stock mis à jour : ${data.new_stock} ${data.unite}`);
+      setStockEntreeItem(null);
+      setStockEntreeQty("1");
+      setStockEntreeNote("");
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setStockEntreeLoading(false);
+    }
+  }
+
+  async function handleDeclasser() {
+    if (!declasserItem) return;
+    setDeclasserLoading(true);
+    try {
+      const res = await apiFetch(`/api/equipment/${declasserItem.id}/declasser`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: declasserNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`"${declasserItem.name}" déclassé — conservé comme source de pièces`);
+      setDeclasserItem(null);
+      setDeclasserNote("");
+      fetchData();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setDeclasserLoading(false);
+    }
+  }
+
+  // com_zone inclus : son parc est déjà restreint à sa propre zone côté serveur
+  // (/api/equipment), donc ça ne lui montre que l'armement de sa zone.
+  const canSeeArmement = ["admin", "chef_service_administratif", "csph", "com_zone"].includes(activeRole);
 
   useEffect(() => {
     apiFetch("/api/config")
@@ -166,11 +234,14 @@ export function EquipmentDashboard({
 
   const activeCategoryObj = categories.find(c => c.id === activeCategory);
   const isVehicle = activeCategoryObj ? isVehicleCategory(activeCategoryObj.label) : false;
-  const categoriesVisibles = categories.filter(cat =>
-    cat.label.toLowerCase().includes("armement") ? canSeeArmement : true
-  );
+  const categoriesVisibles = categories.filter(cat => {
+    if (isHiddenCategoryFor(activeRole, cat.label)) return false;
+    if (cat.label.toLowerCase().includes("armement")) return canSeeArmement;
+    return true;
+  });
 
   const filteredEquipment = equipment.filter(item => {
+    if (isHiddenCategoryFor(activeRole, item.category_label)) return false;
     if (!canSeeArmement && item.category_label?.toLowerCase().includes("armement")) return false;
     const matchesSearch =
       item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -187,7 +258,8 @@ export function EquipmentDashboard({
 
   const scopedBase = activeCategory === "all" ? equipment : equipment.filter(e => e.category_id === activeCategory);
   const scoped = scopedBase.filter(e =>
-    canSeeArmement ? true : !e.category_label?.toLowerCase().includes("armement")
+    !isHiddenCategoryFor(activeRole, e.category_label) &&
+    (canSeeArmement || !e.category_label?.toLowerCase().includes("armement"))
   );
   const stats = {
     total:      scoped.length,
@@ -203,6 +275,13 @@ export function EquipmentDashboard({
     }).length;
 
   const canEdit = ["agent_logistique", "admin"].includes(activeRole);
+  // Le déclassement est réservé au matériel général (ni les véhicules, qui se
+  // réforment côté ChefRamDashboard, ni le matériel d'exploitation, qui se gère
+  // par sortie/entrée de stock) — mêmes rôles que ceux autorisés côté serveur.
+  const canDeclasser = ["admin", "chef_bureau", "agent_logistique", "com_zone"].includes(activeRole);
+  // Sortie/entrée de stock du matériel d'exploitation central — mêmes rôles
+  // que ceux autorisés côté serveur pour /stock-sortie et /stock-entree.
+  const canStockOps = ["admin", "chef_bureau", "agent_logistique"].includes(activeRole);
 
   useEffect(() => { setCurrentPage(1); }, [searchTerm, activeCategory, statusFilter]);
 
@@ -406,7 +485,7 @@ export function EquipmentDashboard({
                     ? "bg-white/10 text-white"
                     : "bg-zinc-100 dark:bg-slate-700 text-zinc-500 dark:text-slate-400"
                 }`}>
-                  {canSeeArmement ? equipment.length : equipment.filter(e => !e.category_label?.toLowerCase().includes("armement")).length}
+                  {equipment.filter(e => !isHiddenCategoryFor(activeRole, e.category_label) && (canSeeArmement || !e.category_label?.toLowerCase().includes("armement"))).length}
                 </span>
               </button>
 
@@ -437,13 +516,13 @@ export function EquipmentDashboard({
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-border-custom dark:border-slate-700 shadow-sm space-y-3">
-            <div>
-              <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-slate-100">Actions</h4>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">Gérez les actifs et leurs mouvements.</p>
-            </div>
-            {canEdit ? (
+          {/* Actions — masqué en lecture seule (rien à faire ici pour ces rôles) */}
+          {canEdit && (
+            <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-border-custom dark:border-slate-700 shadow-sm space-y-3">
+              <div>
+                <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-slate-100">Actions</h4>
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">Gérez les actifs et leurs mouvements.</p>
+              </div>
               <div className="flex flex-col gap-2">
                 <Button
                   className="w-full bg-slate-900 dark:bg-slate-700 hover:bg-brand-orange text-white font-black h-11 transition-all"
@@ -468,12 +547,8 @@ export function EquipmentDashboard({
                   </span>
                 </Button>
               </div>
-            ) : (
-              <div className="text-[9px] font-black bg-zinc-50 dark:bg-slate-900 p-3 rounded-lg border border-dashed border-zinc-200 dark:border-zinc-700 text-center uppercase tracking-wider text-zinc-300 dark:text-zinc-600">
-                Lecture seule
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* ── Tableau ── */}
@@ -497,6 +572,7 @@ export function EquipmentDashboard({
                   { val: "fonctionnel",   label: "✓ Opérationnel", active: "bg-emerald-500 text-white" },
                   { val: "en_reparation", label: "⚙ Maintenance",  active: "bg-amber-500 text-white" },
                   { val: "hors_service",  label: "✕ Hors service", active: "bg-red-500 text-white" },
+                  { val: "declasse",      label: "♻ Déclassé",     active: "bg-slate-500 text-white" },
                 ].map(opt => (
                   <button
                     key={opt.val}
@@ -649,21 +725,37 @@ export function EquipmentDashboard({
                         {/* Actions */}
                         <TableCell className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {canEdit && (
-                              isExploitationItem(item) ? (
-                                <Button
-                                  variant="outline" size="sm"
-                                  className="h-8 px-3 text-[10px] font-black tracking-wider uppercase border-red-200 dark:border-red-900 text-red-500 hover:border-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all"
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    setStockSortieItem(item);
-                                    setStockSortieQty("1");
-                                  }}
-                                >
-                                  <PackageMinus size={11} className="mr-1" />
-                                  Sortie stock
-                                </Button>
-                              ) : (
+                            {isExploitationItem(item) ? (
+                              canStockOps && (
+                                <>
+                                  <Button
+                                    variant="outline" size="sm"
+                                    className="h-8 px-3 text-[10px] font-black tracking-wider uppercase border-emerald-200 dark:border-emerald-900 text-emerald-600 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setStockEntreeItem(item);
+                                      setStockEntreeQty("1");
+                                    }}
+                                  >
+                                    <PackagePlus size={11} className="mr-1" />
+                                    Entrée stock
+                                  </Button>
+                                  <Button
+                                    variant="outline" size="sm"
+                                    className="h-8 px-3 text-[10px] font-black tracking-wider uppercase border-red-200 dark:border-red-900 text-red-500 hover:border-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setStockSortieItem(item);
+                                      setStockSortieQty("1");
+                                    }}
+                                  >
+                                    <PackageMinus size={11} className="mr-1" />
+                                    Sortie stock
+                                  </Button>
+                                </>
+                              )
+                            ) : (
+                              canEdit && (
                                 <Button
                                   variant="outline" size="sm"
                                   className={`h-8 px-3 text-[10px] font-black tracking-wider uppercase transition-all ${
@@ -681,6 +773,16 @@ export function EquipmentDashboard({
                                   {isSelected ? "Sélectionné" : "Mouvement"}
                                 </Button>
                               )
+                            )}
+                            {canDeclasser && !isVehicleCategory(item.category_label) && !isExploitationItem(item) && item.status !== "declasse" && (
+                              <Button
+                                variant="outline" size="sm"
+                                className="h-8 px-3 text-[10px] font-black tracking-wider uppercase border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+                                onClick={e => { e.stopPropagation(); setDeclasserItem(item); }}
+                              >
+                                <Recycle size={11} className="mr-1" />
+                                Déclasser
+                              </Button>
                             )}
                             <Button
                               variant="outline" size="sm"
@@ -771,9 +873,86 @@ export function EquipmentDashboard({
           currentStatus={movementTarget.status}
           zones={zones}
           stations={stations}
+          isVehicle={isVehicleCategory(movementTarget.category_label)}
           onSuccess={fetchData}
         />
       )}
+
+      {/* ── Dialog entrée de stock ── */}
+      <Dialog open={!!stockEntreeItem} onOpenChange={open => { if (!open) { setStockEntreeItem(null); setStockEntreeQty("1"); setStockEntreeNote(""); } }}>
+        <DialogContent className="sm:max-w-[400px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-emerald-700 to-emerald-600 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <PackagePlus size={18} /> Entrée de stock
+              </DialogTitle>
+              <DialogDescription className="text-emerald-100 text-xs mt-0.5 font-medium">
+                {stockEntreeItem?.name}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="px-6 py-5 space-y-5">
+            {stockEntreeItem && (() => {
+              const d = stockEntreeItem.details || {};
+              const stock = parseInt(d.quantite_stock || "0", 10);
+              return (
+                <div className="flex items-center justify-between px-4 py-3 rounded-xl border bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700">
+                  <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Stock actuel</span>
+                  <span className="text-lg font-black text-slate-800 dark:text-slate-200">
+                    {stock} <span className="text-sm font-bold">{d.unite || "unité(s)"}</span>
+                  </span>
+                </div>
+              );
+            })()}
+
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Quantité reçue <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                value={stockEntreeQty}
+                onChange={e => setStockEntreeQty(e.target.value)}
+                className="h-11 text-lg font-black text-center border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                onKeyDown={e => { if (e.key === "Enter") handleStockEntree(); }}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Note (optionnel)</Label>
+              <Input
+                placeholder="Ex : réception fournisseur BC-2026-042"
+                value={stockEntreeNote}
+                onChange={e => setStockEntreeNote(e.target.value)}
+                className="h-9 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1 dark:border-slate-600 dark:text-slate-300"
+              onClick={() => setStockEntreeItem(null)}
+              disabled={stockEntreeLoading}
+            >
+              Annuler
+            </Button>
+            <Button
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+              onClick={handleStockEntree}
+              disabled={stockEntreeLoading}
+            >
+              {stockEntreeLoading
+                ? <Loader2 size={15} className="animate-spin mr-2" />
+                : <PackagePlus size={15} className="mr-2" />}
+              Confirmer l'entrée
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Dialog sortie de stock ── */}
       <Dialog open={!!stockSortieItem} onOpenChange={open => { if (!open) { setStockSortieItem(null); setStockSortieZoneId(""); setStockSortieQty("1"); } }}>
@@ -861,6 +1040,46 @@ export function EquipmentDashboard({
                 ? <Loader2 size={15} className="animate-spin mr-2" />
                 : <PackageMinus size={15} className="mr-2" />}
               Confirmer la sortie
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog déclassement ── */}
+      <Dialog open={!!declasserItem} onOpenChange={open => { if (!open) { setDeclasserItem(null); setDeclasserNote(""); } }}>
+        <DialogContent className="sm:max-w-[420px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-slate-700 to-slate-600 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <Recycle size={18} /> Déclasser l'équipement
+              </DialogTitle>
+              <DialogDescription className="text-slate-300 text-xs mt-0.5 font-medium">
+                {declasserItem?.name}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="px-6 py-5 space-y-4">
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              L'équipement passera au statut <strong>« Déclassé »</strong> — il reste dans l'inventaire pour servir de source de pièces détachées, mais ne compte plus comme opérationnel.
+            </p>
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Motif (optionnel)</Label>
+              <textarea
+                placeholder="Ex : moteur HS, carte mère grillée, panne irréparable..."
+                value={declasserNote}
+                onChange={e => setDeclasserNote(e.target.value)}
+                rows={3}
+                className="w-full text-sm border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+          </div>
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setDeclasserItem(null)} disabled={declasserLoading}>
+              Annuler
+            </Button>
+            <Button className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-black" onClick={handleDeclasser} disabled={declasserLoading}>
+              {declasserLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <Recycle size={15} className="mr-2" />}
+              Confirmer
             </Button>
           </DialogFooter>
         </DialogContent>

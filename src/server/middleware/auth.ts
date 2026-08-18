@@ -30,7 +30,7 @@ export const authenticateToken = async (req: any, res: any, next: any) => {
     if (!decoded?.id) return res.status(403).json({ error: "Token invalide" });
 
     const result = await query(
-      "SELECT id, username, role, email, display_name FROM users WHERE id = $1 AND deleted_at IS NULL",
+      "SELECT id, username, role, email, display_name, zone_id FROM users WHERE id = $1 AND deleted_at IS NULL",
       [decoded.id]
     );
     if (result.rows.length === 0) return res.status(401).json({ error: "Utilisateur non trouvé" });

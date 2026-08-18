@@ -178,6 +178,50 @@ export async function initSchema() {
       details    JSONB,
       ip         VARCHAR(64),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    // ── Déclarations de stock COM Zone : appliquées directement si la quantité
+    //    déclarée correspond à l'existant, sinon en attente d'approbation
+    //    (chef_bureau OU chef_service_administratif) avant d'affecter equipment_details.
+    `CREATE TABLE IF NOT EXISTS stock_declarations (
+      id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id       UUID NOT NULL REFERENCES equipment(id),
+      zone_id            UUID REFERENCES zones(id),
+      declared_by        UUID NOT NULL REFERENCES users(id),
+      declared_by_name   VARCHAR(255),
+      previous_quantity  INTEGER NOT NULL,
+      declared_quantity  INTEGER NOT NULL,
+      unite              VARCHAR(50),
+      status             VARCHAR(20) NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending','approved','rejected')),
+      decided_by         UUID REFERENCES users(id),
+      decided_by_name    VARCHAR(255),
+      decision_note      TEXT,
+      decided_at         TIMESTAMP,
+      note               TEXT,
+      created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    // ── Demandes de ravitaillement : ouvertes quand le stock d'une zone
+    //    atteint seuil_alerte, closes quand le comzone confirme réception.
+    `CREATE TABLE IF NOT EXISTS resupply_requests (
+      id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id        UUID NOT NULL REFERENCES equipment(id),
+      zone_id             UUID REFERENCES zones(id),
+      triggered_by        UUID REFERENCES users(id),
+      quantity_at_trigger INTEGER NOT NULL,
+      seuil_alerte        INTEGER NOT NULL,
+      unite               VARCHAR(50),
+      status              VARCHAR(20) NOT NULL DEFAULT 'open'
+                          CHECK (status IN ('open','fulfilled','confirmed')),
+      fulfilled_by        UUID REFERENCES users(id),
+      fulfilled_by_name   VARCHAR(255),
+      fulfilled_at        TIMESTAMP,
+      fulfilled_quantity  INTEGER,
+      fulfillment_note    TEXT,
+      confirmed_by        UUID REFERENCES users(id),
+      confirmed_by_name   VARCHAR(255),
+      confirmed_at        TIMESTAMP,
+      confirmed_quantity  INTEGER,
+      created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`
   ];
 
@@ -188,6 +232,8 @@ export async function initSchema() {
   try {
     await query(`CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs (created_at DESC)`);
     await query(`CREATE INDEX IF NOT EXISTS audit_logs_action_idx ON audit_logs (action)`);
+    await query(`CREATE INDEX IF NOT EXISTS stock_declarations_status_idx ON stock_declarations (status, created_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS resupply_requests_status_idx ON resupply_requests (status, zone_id)`);
   } catch (e) {}
 
   // ── Migration : ajouter performed_by_name si absente (bases existantes) ──
@@ -196,6 +242,45 @@ export async function initSchema() {
       await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS performed_by_name VARCHAR(255)`);
       console.log('[DB] Migration: colonne performed_by_name ajoutée à movements.');
     } catch (e) {}
+
+    // ── Migration : approbation des mouvements COM Zone (transferts) ──
+    // Par défaut 'approved' pour que les mouvements existants et ceux des autres
+    // rôles restent effectifs immédiatement — seuls les transferts créés par
+    // com_zone partent en 'pending'.
+    try {
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved'`);
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS decided_by UUID REFERENCES users(id)`);
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS decided_by_name VARCHAR(255)`);
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS decision_note TEXT`);
+      await query(`ALTER TABLE movements ADD COLUMN IF NOT EXISTS decided_at TIMESTAMP`);
+      console.log('[DB] Migration: colonnes status/decided_* ajoutées à movements.');
+    } catch (e) {}
+
+    // ── Migration : rattacher un utilisateur COM ZONE à sa zone ──
+    try {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS zone_id UUID REFERENCES zones(id)`);
+      console.log('[DB] Migration: colonne zone_id ajoutée à users.');
+    } catch (e) {}
+
+    // ── Migration : nouveaux rôles Module 2 (chef_bureau, chef_ram, com_zone).
+    //    users.role est un enum Postgres (user_role) sur cette base — sans effet
+    //    si la colonne est un simple VARCHAR (le type n'existe alors pas).
+    for (const roleValue of ['chef_bureau', 'chef_ram', 'com_zone']) {
+      try {
+        await query(`ALTER TYPE user_role ADD VALUE IF NOT EXISTS '${roleValue}'`);
+        console.log(`[DB] Migration: valeur '${roleValue}' ajoutée à l'enum user_role.`);
+      } catch (e) {}
+    }
+
+    // ── Migration : matériel déclassé / véhicule réformé.
+    //    equipment.status est lui aussi un enum Postgres (equipment_status),
+    //    même remarque que ci-dessus pour user_role.
+    for (const statusValue of ['declasse', 'reforme']) {
+      try {
+        await query(`ALTER TYPE equipment_status ADD VALUE IF NOT EXISTS '${statusValue}'`);
+        console.log(`[DB] Migration: valeur '${statusValue}' ajoutée à l'enum equipment_status.`);
+      } catch (e) {}
+    }
 
     // ── Migration : remplacer UNIQUE(name) sur zones par un index partiel
     //    (seules les zones actives doivent avoir un nom unique,
@@ -225,6 +310,57 @@ export async function initSchema() {
         WHERE is_active = true
       `);
       console.log('[DB] Migration: contrainte UNIQUE stations (zone_id, name) remplacée par index partiel.');
+    } catch (e) {}
+
+    // ── Migration : empêcher les doublons de nom d'utilisateur parmi les
+    //    comptes actifs (aucune contrainte n'existait avant — deux comptes
+    //    pouvaient partager le même username, l'un des deux étant alors
+    //    inaccessible ou ambigu à la connexion). Les comptes désactivés
+    //    (deleted_at renseigné) peuvent réutiliser un username, comme pour
+    //    zones/stations ci-dessus.
+    try {
+      await query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS users_active_username_unique
+        ON users (LOWER(username))
+        WHERE deleted_at IS NULL
+      `);
+      console.log('[DB] Migration: index unique users.username (comptes actifs) créé.');
+    } catch (e) {}
+
+    // ── Migration : empêcher les doublons de libellé de catégorie parmi les
+    //    catégories actives (seul le code était unique — deux catégories avec
+    //    des codes différents mais le même libellé pouvaient coexister, comme
+    //    ça a été le cas pour "Matériel d'exploitation").
+    try {
+      await query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS categories_active_label_unique
+        ON categories (LOWER(label))
+        WHERE is_active = true
+      `);
+      console.log('[DB] Migration: index unique categories.label (catégories actives) créé.');
+    } catch (e) {}
+
+    // ── Migration : les articles catalogue "Matériel d'exploitation" étaient
+    //    repérés par zone_id NULL. Ils sont maintenant rattachés à une vraie
+    //    zone (SERVICE_ADMINISTRATIF / station MAGASIN), comme tout le reste
+    //    du parc — cohérent avec le fait que tout équipement neuf est d'abord
+    //    acquis par la logistique avant déploiement en zone.
+    try {
+      const { rows: [svcZone] } = await query(`SELECT id FROM zones WHERE name = 'SERVICE_ADMINISTRATIF' LIMIT 1`);
+      if (svcZone) {
+        const { rows: [magasin] } = await query(
+          `SELECT id FROM stations WHERE zone_id = $1 AND name = 'MAGASIN' LIMIT 1`, [svcZone.id]
+        );
+        const { rowCount } = await query(
+          `UPDATE equipment e SET zone_id = $1, station_id = $2
+           FROM categories c
+           WHERE e.category_id = c.id AND c.label ILIKE '%exploitation%' AND e.zone_id IS NULL AND e.deleted_at IS NULL`,
+          [svcZone.id, magasin?.id || null]
+        );
+        if (rowCount && rowCount > 0) {
+          console.log(`[DB] Migration: ${rowCount} article(s) catalogue Matériel d'exploitation rattaché(s) à SERVICE_ADMINISTRATIF/MAGASIN.`);
+        }
+      }
     } catch (e) {}
 
     // ── Récupération : réactiver les stations inactives dont la zone est active.

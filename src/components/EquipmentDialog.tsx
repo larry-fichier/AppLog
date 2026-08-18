@@ -269,6 +269,9 @@ export function EquipmentDialog({
   const [stationId, setStationId]       = useState("");
   // Nombre d'interventions sauvegardées au moment de l'ouverture — empêche leur suppression
   const savedInterventionsCount = useRef<number>(0);
+  // ── Interventions véhicule ─────────────────────────────
+  const [newIntervDate, setNewIntervDate] = useState("");
+  const [newIntervDesc, setNewIntervDesc] = useState("");
 
   React.useEffect(() => {
     if (!showHistory || !item?.id) return;
@@ -278,6 +281,60 @@ export function EquipmentDialog({
       .then(setHistory).catch(() => {})
       .finally(() => setHistoryLoading(false));
   }, [showHistory, item?.id]);
+
+  // Init formulaire à l'ouverture / changement d'équipement édité — doit rester
+  // AVANT le retour anticipé du panneau Historique ci-dessous : sinon React
+  // saute cet appel de hook dès que showHistory passe à true ("Rendered fewer
+  // hooks than expected"), puisque ce useEffect était initialement déclaré
+  // après ce retour anticipé.
+  useEffect(() => {
+    if (!open) return;
+
+    apiFetch("/api/config")
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        setSettings({
+          categories: (data.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
+          zones:      (data.zones     || []).map((z: any) => ({ id: z.id, label: z.name })),
+          stations:   (data.stations  || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
+          roles: [],
+        });
+      })
+      .catch(console.error);
+
+    if (item) {
+      setCategoryId((item as any).category_id  || "");
+      setCategoryLabel((item as any).category_label || "");
+      // En mode édition : name = designation si elle existe dans les details, sinon le name de la table
+      setName((item as any).details?.designation || item.name || "");
+      setStatus(item.status || "fonctionnel");
+      setZoneId((item as any).zone_id    || "");
+      setStationId((item as any).station_id || "");
+      // S'assurer que details est bien un objet (jamais null/undefined)
+      const rawDetails = item.details && typeof item.details === "object" ? { ...item.details } : {};
+      setDetails(rawDetails);
+      // Capturer le nb d'interventions déjà sauvegardées (elles ne pourront plus être supprimées)
+      try {
+        const raw = rawDetails["interventions"];
+        const parsed = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+        savedInterventionsCount.current = Array.isArray(parsed) ? parsed.length : 0;
+      } catch { savedInterventionsCount.current = 0; }
+      setStep("info");
+    } else {
+      setCategoryId(defaultCategoryId || "");
+      setCategoryLabel("");
+      setName("");
+      setStatus("fonctionnel");
+      setZoneId("");
+      setStationId("");
+      setDetails({});
+      savedInterventionsCount.current = 0;
+      setStep(defaultCategoryId ? "info" : "category");
+    }
+
+    setShowDeleteConfirm(false);
+  }, [item, open]);
 
   const MOVEMENT_LABELS: Record<string, { label: string; color: string }> = {
     entree:      { label: "Entrée",      color: "bg-emerald-100 text-emerald-700" },
@@ -321,8 +378,14 @@ export function EquipmentDialog({
                       <div key={h.id} className="relative">
                         <div className="absolute -left-6 top-1.5 w-3 h-3 rounded-full bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-600"/>
                         <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
-                          <div className="flex items-center gap-2 mb-1.5">
+                          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${lbl.color}`}>{lbl.label}</span>
+                            {h.status === "pending" && (
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">En attente d'approbation</span>
+                            )}
+                            {h.status === "rejected" && (
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-700">Rejeté</span>
+                            )}
                             <span className="text-[10px] text-slate-400 ml-auto">
                               {new Date(h.created_at).toLocaleDateString("fr-FR", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })}
                             </span>
@@ -335,6 +398,9 @@ export function EquipmentDialog({
                             )}
                             {h.performed_by_name && <div><span className="text-slate-400">Par :</span> {h.performed_by_name}</div>}
                             {h.note && <div className="mt-1 italic text-slate-500">"{h.note}"</div>}
+                            {h.status === "rejected" && h.decision_note && (
+                              <div className="mt-1 italic text-red-500">Motif du rejet : « {h.decision_note} »</div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -381,10 +447,6 @@ export function EquipmentDialog({
       </Dialog>
     );
   }
-
-  // ── Interventions véhicule ─────────────────────────────
-  const [newIntervDate, setNewIntervDate] = useState("");
-  const [newIntervDesc, setNewIntervDesc] = useState("");
 
   function formatIntervDate(date: string, annee?: string): string {
     if (!date) return "";
@@ -632,6 +694,9 @@ export function EquipmentDialog({
 
   const isReadOnly = activeRole === "csph" || activeRole === "chef_service_administratif";
   const canDelete  = ["admin", "agent_logistique"].includes(activeRole);
+  // chef_ram n'ajoute que des véhicules neufs : ni changement de catégorie,
+  // ni saisie d'historique d'interventions à la création.
+  const hideForChefRamCreate = activeRole === "chef_ram" && !item;
 
   const selectedCategory = settings?.categories.find(c => c.id === categoryId);
   // ✅ FIX : categoryLabel (state) est rempli immédiatement à l'ouverture du dialog
@@ -651,55 +716,6 @@ export function EquipmentDialog({
   const isExploitationCategory = /exploitation|matériel d|materiel d/.test(categoryLabelForFields.toLowerCase());
   const isGroupeCategory       = /groupe|générateur|generateur|electro|énergie|energie|ups|onduleur/.test(categoryLabelForFields.toLowerCase());
   const isArmementCategory     = /armement|arme|armes/.test(categoryLabelForFields.toLowerCase());
-
-  useEffect(() => {
-    if (!open) return;
-
-    apiFetch("/api/config")
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data) return;
-        setSettings({
-          categories: (data.categories || []).map((c: any) => ({ id: c.id, label: c.label, icon: "Box" })),
-          zones:      (data.zones     || []).map((z: any) => ({ id: z.id, label: z.name })),
-          stations:   (data.stations  || []).map((s: any) => ({ id: s.id, label: s.name, zoneId: s.zone_id })),
-          roles: [],
-        });
-      })
-      .catch(console.error);
-
-    if (item) {
-      setCategoryId((item as any).category_id  || "");
-      setCategoryLabel((item as any).category_label || "");
-      // En mode édition : name = designation si elle existe dans les details, sinon le name de la table
-      setName((item as any).details?.designation || item.name || "");
-      setStatus(item.status || "fonctionnel");
-      setZoneId((item as any).zone_id    || "");
-      setStationId((item as any).station_id || "");
-      // S'assurer que details est bien un objet (jamais null/undefined)
-      const rawDetails = item.details && typeof item.details === "object" ? { ...item.details } : {};
-      setDetails(rawDetails);
-      // Capturer le nb d'interventions déjà sauvegardées (elles ne pourront plus être supprimées)
-      try {
-        const raw = rawDetails["interventions"];
-        const parsed = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
-        savedInterventionsCount.current = Array.isArray(parsed) ? parsed.length : 0;
-      } catch { savedInterventionsCount.current = 0; }
-      setStep("info");
-    } else {
-      setCategoryId(defaultCategoryId || "");
-      setCategoryLabel("");
-      setName("");
-      setStatus("fonctionnel");
-      setZoneId("");
-      setStationId("");
-      setDetails({});
-      savedInterventionsCount.current = 0;
-      setStep(defaultCategoryId ? "info" : "category");
-    }
-
-    setShowDeleteConfirm(false);
-  }, [item, open]);
 
   const setDetail = (key: string, value: any) => {
     setDetails(prev => ({ ...prev, [key]: value }));
@@ -961,7 +977,7 @@ export function EquipmentDialog({
                   <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3">
                     <span className="text-xl">{selectedCategory ? getCategoryIcon(selectedCategory.label) : "📦"}</span>
                     <span className="text-sm font-black text-slate-700 dark:text-slate-200">{selectedCategory?.label}</span>
-                    {!item && (
+                    {!item && !hideForChefRamCreate && (
                       <button
                         type="button"
                         onClick={() => setStep("category")}
@@ -1123,7 +1139,7 @@ export function EquipmentDialog({
                   )}
 
                   {/* Historique des interventions */}
-                  {(getInterventions().length > 0 || (
+                  {!hideForChefRamCreate && (getInterventions().length > 0 || (
                     !isReadOnly &&
                     (categoryLabelForFields.toLowerCase().match(/rame|véhicule|vehicule|voiture|camion|transport/))
                   )) && (
@@ -1214,6 +1230,18 @@ export function EquipmentDialog({
 
             {/* FOOTER */}
             <div className="px-8 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-700 flex items-center gap-3">
+              {item && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowHistory(true)}
+                  disabled={loading}
+                  className="text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 font-bold text-xs shrink-0"
+                >
+                  <History size={13} className="mr-1" />
+                  Historique
+                </Button>
+              )}
               {item && !isReadOnly && canDelete && (
                 <Button
                   type="button"
@@ -1233,13 +1261,13 @@ export function EquipmentDialog({
                   type="button"
                   variant="outline"
                   onClick={() => {
-                    if (step === "info" && !item) setStep("category");
+                    if (step === "info" && !item && !hideForChefRamCreate) setStep("category");
                     else onOpenChange(false);
                   }}
                   disabled={loading}
                   className="font-bold text-xs border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
                 >
-                  {step === "info" && !item
+                  {step === "info" && !item && !hideForChefRamCreate
                     ? <><ChevronLeft size={13} className="mr-1" />Retour</>
                     : isReadOnly ? "Fermer" : "Annuler"}
                 </Button>

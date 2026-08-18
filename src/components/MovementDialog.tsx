@@ -59,12 +59,20 @@ interface Props {
   onSuccess?: () => void;
   // Pour la modification d'un mouvement existant
   editingMovement?: Movement | null;
+  // COM Zone : verrouille la destination sur sa propre zone (mouvements
+  // limités aux stations de sa zone — pas de sélection d'une autre zone).
+  lockedZoneId?: string;
+  // COM Zone : seul le transfert est autorisé (validé ensuite par chef_bureau / CSA).
+  onlyTransfert?: boolean;
+  // Véhicules (Rame) : l'affectation concerne la zone en général, pas un
+  // bureau précis — on masque la sélection de bureau dans ce cas.
+  isVehicle?: boolean;
 }
 
 export function MovementDialog({
   open, onOpenChange, equipmentId, equipmentName,
   currentZoneId, currentStationId, currentStatus = 'fonctionnel',
-  zones, stations, onSuccess, editingMovement,
+  zones, stations, onSuccess, editingMovement, lockedZoneId, onlyTransfert, isVehicle,
 }: Props) {
   const isEditing = !!editingMovement;
 
@@ -93,7 +101,7 @@ export function MovementDialog({
       setStationQuery('');
     } else if (open && !editingMovement) {
       setType('transfert');
-      setToZoneId('');
+      setToZoneId(lockedZoneId || '');
       setToStationId('');
       setNewStatus(currentStatus);
       setNote('');
@@ -102,12 +110,15 @@ export function MovementDialog({
       setDateRetourPrevue('');
       setStationQuery('');
     }
-  }, [open, editingMovement]);
+  }, [open, editingMovement, lockedZoneId]);
 
-  // Résultats de la recherche de bureau (toutes zones confondues)
+  // Résultats de la recherche de bureau (verrouillée à sa zone si lockedZoneId)
   const stationSearchResults = stationQuery.trim().length >= 1
     ? stations
-        .filter(s => s.label.toLowerCase().includes(stationQuery.toLowerCase().trim()))
+        .filter(s => {
+          if (lockedZoneId && ((s as any).zoneId || (s as any).zone_id) !== lockedZoneId) return false;
+          return s.label.toLowerCase().includes(stationQuery.toLowerCase().trim());
+        })
         .sort((a, b) => a.label.localeCompare(b.label))
         .slice(0, 8)
     : [];
@@ -128,6 +139,10 @@ export function MovementDialog({
   const needsStatus      = type === 'ajustement';
   const showSourceInfo   = SHOW_SOURCE.includes(type);
   const needsDates       = NEEDS_DATES.includes(type);
+  // Le bureau n'est obligatoire que pour un transfert (changement de bureau
+  // au sein d'une même zone) — pour les autres types, il reste optionnel côté
+  // serveur. Pour un véhicule, on ne le montre que quand il est réellement requis.
+  const hideStation       = isVehicle && type !== 'transfert';
 
   const TYPE_PREFIX: Record<MovType, string> = {
     transfert:   'TR',
@@ -160,7 +175,7 @@ export function MovementDialog({
 
   const handleTypeChange = (t: MovType) => {
     setType(t);
-    setToZoneId('');
+    setToZoneId(lockedZoneId || '');
     setToStationId('');
     setDateDeploiement('');
     setDateRetourPrevue('');
@@ -277,13 +292,15 @@ export function MovementDialog({
               <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
                 Type de mouvement
               </Label>
-              {isEditing ? (
-                // En mode édition : afficher le type sans pouvoir le changer
+              {isEditing || onlyTransfert ? (
+                // En mode édition, ou COM Zone (seul le transfert est autorisé) : type fixe
                 <div className={`p-3 rounded-xl border-2 inline-block ${
                   MOVEMENT_TYPES.find(m => m.value === type)?.color || 'bg-slate-50 border-slate-200'
                 }`}>
                   <p className="text-xs font-black">{MOVEMENT_TYPES.find(m => m.value === type)?.label || type}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Type non modifiable</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {isEditing ? 'Type non modifiable' : 'Seul le transfert est autorisé pour votre rôle'}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -325,89 +342,100 @@ export function MovementDialog({
                   {type === 'deploiement' ? 'Site de déploiement' : 'Vers'}
                 </p>
 
-                {/* Recherche rapide de bureau */}
-                <div className="space-y-1">
-                  <Label className="text-[11px] font-bold text-slate-500">Recherche rapide</Label>
-                  <div className="relative">
-                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                    <input
-                      type="text"
-                      placeholder="Taper le nom d'un bureau..."
-                      value={stationQuery}
-                      onChange={e => setStationQuery(e.target.value)}
-                      className="w-full h-9 pl-8 pr-8 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 transition-all"
-                    />
-                    {stationQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setStationQuery('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                      >
-                        <X size={13} />
-                      </button>
+                {/* Recherche rapide de bureau — masquée quand le bureau n'est pas requis */}
+                {!hideStation && (
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-bold text-slate-500">Recherche rapide</Label>
+                    <div className="relative">
+                      <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Taper le nom d'un bureau..."
+                        value={stationQuery}
+                        onChange={e => setStationQuery(e.target.value)}
+                        className="w-full h-9 pl-8 pr-8 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 transition-all"
+                      />
+                      {stationQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setStationQuery('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                    {stationSearchResults.length > 0 && (
+                      <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-md z-10 relative">
+                        {stationSearchResults.map(s => {
+                          const zone = zones.find(z => z.id === (s as any).zoneId);
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2"
+                              onClick={() => {
+                                const zId = (s as any).zoneId || '';
+                                handleToZoneChange(zId);
+                                handleToStationChange(s.id);
+                                setStationQuery('');
+                              }}
+                            >
+                              <span className="font-medium text-slate-700 truncate">{s.label}</span>
+                              {zone && <span className="text-[11px] text-slate-400 shrink-0">{zone.label}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {stationQuery.trim().length >= 1 && stationSearchResults.length === 0 && (
+                      <p className="text-[11px] text-slate-400 italic px-1">Aucun bureau trouvé</p>
                     )}
                   </div>
-                  {stationSearchResults.length > 0 && (
-                    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-md z-10 relative">
-                      {stationSearchResults.map(s => {
-                        const zone = zones.find(z => z.id === (s as any).zoneId);
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2"
-                            onClick={() => {
-                              const zId = (s as any).zoneId || '';
-                              handleToZoneChange(zId);
-                              handleToStationChange(s.id);
-                              setStationQuery('');
-                            }}
-                          >
-                            <span className="font-medium text-slate-700 truncate">{s.label}</span>
-                            {zone && <span className="text-[11px] text-slate-400 shrink-0">{zone.label}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {stationQuery.trim().length >= 1 && stationSearchResults.length === 0 && (
-                    <p className="text-[11px] text-slate-400 italic px-1">Aucun bureau trouvé</p>
-                  )}
-                </div>
+                )}
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className={`grid grid-cols-1 gap-4 ${hideStation ? '' : 'sm:grid-cols-2'}`}>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold text-slate-500">Zone *</Label>
-                    <select
-                      value={toZoneId}
-                      onChange={e => handleToZoneChange(e.target.value)}
-                      className="w-full h-10 px-3 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                    >
-                      <option value="">Choisir une zone...</option>
-                      {zones.sort((a, b) => a.label.localeCompare(b.label)).map(z => (
-                        <option key={z.id} value={z.id}>{z.label}</option>
-                      ))}
-                    </select>
+                    {lockedZoneId ? (
+                      <div className="w-full h-10 px-3 flex items-center text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-500">
+                        {zones.find(z => z.id === lockedZoneId)?.label ?? 'Votre zone'}
+                      </div>
+                    ) : (
+                      <select
+                        value={toZoneId}
+                        onChange={e => handleToZoneChange(e.target.value)}
+                        className="w-full h-10 px-3 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                      >
+                        <option value="">Choisir une zone...</option>
+                        {zones.sort((a, b) => a.label.localeCompare(b.label)).map(z => (
+                          <option key={z.id} value={z.id}>{z.label}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold text-slate-500">Bureau</Label>
-                    <select
-                      value={toStationId}
-                      onChange={e => handleToStationChange(e.target.value)}
-                      disabled={!toZoneId}
-                      className={`w-full h-10 px-3 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all ${
-                        !toZoneId ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      <option value="">
-                        {toZoneId ? 'Choisir un bureau...' : 'Sélectionnez une zone'}
-                      </option>
-                      {filteredDest.map(s => (
-                        <option key={s.id} value={s.id}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Bureau — requis uniquement pour un transfert (même zone, autre bureau) */}
+                  {!hideStation && (
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] font-bold text-slate-500">Bureau</Label>
+                      <select
+                        value={toStationId}
+                        onChange={e => handleToStationChange(e.target.value)}
+                        disabled={!toZoneId}
+                        className={`w-full h-10 px-3 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all ${
+                          !toZoneId ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        <option value="">
+                          {toZoneId ? 'Choisir un bureau...' : 'Sélectionnez une zone'}
+                        </option>
+                        {filteredDest.map(s => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -504,6 +532,12 @@ export function MovementDialog({
                 className="border-slate-200 text-sm resize-none"
               />
             </div>
+
+            {onlyTransfert && !isEditing && (
+              <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+                Ce transfert sera envoyé au chef de bureau / CSA pour approbation avant d'être appliqué.
+              </p>
+            )}
           </div>
 
           <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">

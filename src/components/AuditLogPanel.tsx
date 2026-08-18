@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import {
   ShieldCheck, Search, Download, RefreshCw, ChevronLeft, ChevronRight,
   LogIn, LogOut, Box, Pencil, Trash2, ArrowLeftRight, PackageMinus,
-  Settings2, LifeBuoy, UserPlus, UserCog, UserMinus, KeyRound, Activity,
+  Settings2, LifeBuoy, UserPlus, UserCog, UserMinus, KeyRound, Activity, AlertTriangle,
+  ClipboardCheck, CheckCircle2, XCircle, Truck, PackageCheck, FileText, Recycle, Award,
 } from "lucide-react";
 
 interface AuditLogRow {
@@ -33,11 +34,26 @@ const ACTION_META: Record<string, { label: string; Icon: any; color: string; bg:
   USER_ROLE_UPDATED:   { label: "Rôle modifié",                   Icon: UserCog,      color: "text-amber-700 dark:text-amber-400",      bg: "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800" },
   USER_DELETED:        { label: "Utilisateur supprimé",           Icon: UserMinus,    color: "text-red-700 dark:text-red-400",          bg: "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800" },
   USER_PASSWORD_RESET: { label: "Mot de passe réinitialisé",      Icon: KeyRound,     color: "text-slate-600 dark:text-slate-300",      bg: "bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600" },
+  EQUIPMENT_PANNE_DECLAREE: { label: "Panne déclarée",             Icon: AlertTriangle, color: "text-red-700 dark:text-red-400",         bg: "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800" },
+  EQUIPMENT_REPARATION_DECLAREE: { label: "Réparation signalée",   Icon: CheckCircle2, color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800" },
+  EQUIPMENT_DECLASSE: { label: "Équipement déclassé",     Icon: Recycle, color: "text-slate-600 dark:text-slate-300", bg: "bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600" },
+  EQUIPMENT_REFORME:  { label: "Véhicule réformé",        Icon: Award,   color: "text-purple-700 dark:text-purple-400", bg: "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800" },
+  STOCK_DECLARATION_CREATED:   { label: "Écart de stock déclaré",     Icon: ClipboardCheck, color: "text-amber-700 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800" },
+  STOCK_DECLARATION_CONFIRMED: { label: "Stock confirmé (sans écart)", Icon: ClipboardCheck, color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800" },
+  STOCK_DECLARATION_APPROVED:  { label: "Déclaration de stock approuvée", Icon: CheckCircle2, color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800" },
+  STOCK_DECLARATION_REJECTED:  { label: "Déclaration de stock rejetée", Icon: XCircle, color: "text-red-700 dark:text-red-400", bg: "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800" },
+  RESUPPLY_NEEDED:    { label: "Ravitaillement nécessaire",  Icon: Truck,         color: "text-orange-700 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800" },
+  RESUPPLY_FULFILLED: { label: "Ravitaillement effectif",    Icon: PackageCheck,  color: "text-blue-700 dark:text-blue-400",     bg: "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800" },
+  RESUPPLY_CONFIRMED: { label: "Réception confirmée",        Icon: PackageCheck,  color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800" },
+  REPORT_GENERATED: { label: "Rapport généré",                Icon: FileText,      color: "text-cyan-700 dark:text-cyan-400",       bg: "bg-cyan-50 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800" },
 };
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrateur",
   chef_service_administratif: "Chef Service Administratif",
+  chef_bureau: "Chef de Bureau",
+  chef_ram: "Chef RAM",
+  com_zone: "COM Zone",
   csph: "CSPH",
   agent_logistique: "Agent Logistique",
 };
@@ -68,6 +84,14 @@ function detailSummary(action: string, details: Record<string, any> | null): str
       return [details.categories != null ? `${details.categories} catégorie(s)` : "", details.zones != null ? `${details.zones} zone(s)` : "", details.stations != null ? `${details.stations} station(s)` : ""].filter(Boolean).join(" · ");
     case "ADMIN_RECOVER":
       return `${details.recoveredStations ?? 0} bureau(x), ${details.recoveredZones ?? 0} zone(s) récupérés`;
+    case "EQUIPMENT_PANNE_DECLAREE":
+      return [details.equipmentName ? `Véhicule : ${details.equipmentName}` : "", details.description ? `Panne : ${details.description}` : ""].filter(Boolean).join(" · ");
+    case "EQUIPMENT_REPARATION_DECLAREE":
+      return [details.equipmentName ? `Véhicule : ${details.equipmentName}` : "", details.note ? `Note : ${details.note}` : ""].filter(Boolean).join(" · ");
+    case "EQUIPMENT_DECLASSE":
+      return details.note ? `Motif : ${details.note}` : "";
+    case "EQUIPMENT_REFORME":
+      return [details.recipient ? `Remis à : ${details.recipient}` : "", details.note ? `Note : ${details.note}` : ""].filter(Boolean).join(" · ");
     default:
       return "";
   }

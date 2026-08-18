@@ -24,6 +24,12 @@ export async function createTestQuery() {
 
   // Schéma sans DEFAULT gen_random_uuid() — UUIDs fournis à l'INSERT
   const tables = [
+    `CREATE TABLE IF NOT EXISTS zones (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(150) UNIQUE NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`,
     `CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       username VARCHAR(128) UNIQUE NOT NULL,
@@ -31,6 +37,7 @@ export async function createTestQuery() {
       password_hash TEXT,
       display_name VARCHAR(255),
       role VARCHAR(50) DEFAULT 'agent_logistique',
+      zone_id UUID REFERENCES zones(id),
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
       deleted_at TIMESTAMP
@@ -39,12 +46,6 @@ export async function createTestQuery() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       code VARCHAR(50) UNIQUE NOT NULL,
       label VARCHAR(100) NOT NULL,
-      is_active BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT NOW()
-    )`,
-    `CREATE TABLE IF NOT EXISTS zones (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      name VARCHAR(150) UNIQUE NOT NULL,
       is_active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT NOW()
     )`,
@@ -100,6 +101,43 @@ export async function createTestQuery() {
       reference VARCHAR(100),
       created_at TIMESTAMP DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS stock_declarations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id UUID NOT NULL REFERENCES equipment(id),
+      zone_id UUID REFERENCES zones(id),
+      declared_by UUID NOT NULL REFERENCES users(id),
+      declared_by_name VARCHAR(255),
+      previous_quantity INTEGER NOT NULL,
+      declared_quantity INTEGER NOT NULL,
+      unite VARCHAR(50),
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      decided_by UUID REFERENCES users(id),
+      decided_by_name VARCHAR(255),
+      decision_note TEXT,
+      decided_at TIMESTAMP,
+      note TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS resupply_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      equipment_id UUID NOT NULL REFERENCES equipment(id),
+      zone_id UUID REFERENCES zones(id),
+      triggered_by UUID REFERENCES users(id),
+      quantity_at_trigger INTEGER NOT NULL,
+      seuil_alerte INTEGER NOT NULL,
+      unite VARCHAR(50),
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      fulfilled_by UUID REFERENCES users(id),
+      fulfilled_by_name VARCHAR(255),
+      fulfilled_at TIMESTAMP,
+      fulfilled_quantity INTEGER,
+      fulfillment_note TEXT,
+      confirmed_by UUID REFERENCES users(id),
+      confirmed_by_name VARCHAR(255),
+      confirmed_at TIMESTAMP,
+      confirmed_quantity INTEGER,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`,
   ];
 
   for (const sql of tables) {
@@ -112,10 +150,18 @@ export async function createTestQuery() {
 export async function seedTestData(query: Function) {
   const bcrypt = await import('bcryptjs');
 
-  const adminId    = crypto.randomUUID();
-  const agentId    = crypto.randomUUID();
-  const categoryId = crypto.randomUUID();
-  const zoneId     = crypto.randomUUID();
+  const adminId       = crypto.randomUUID();
+  const agentId       = crypto.randomUUID();
+  const categoryId    = crypto.randomUUID();
+  const zoneId        = crypto.randomUUID();
+  const zoneBId       = crypto.randomUUID();
+  const comZoneId     = crypto.randomUUID();
+  const comZoneBId    = crypto.randomUUID();
+  const chefBureauId  = crypto.randomUUID();
+  const csaId         = crypto.randomUUID();
+  const chefRamId     = crypto.randomUUID();
+  const stockCategoryId = crypto.randomUUID();
+  const stockEquipmentId = crypto.randomUUID();
 
   await query(
     `INSERT INTO users (id, username, email, password_hash, display_name, role)
@@ -139,5 +185,68 @@ export async function seedTestData(query: Function) {
     [zoneId, 'Zone Nord']
   );
 
-  return { adminId, agentId, categoryId, zoneId };
+  await query(
+    `INSERT INTO zones (id, name) VALUES ($1, $2)`,
+    [zoneBId, 'Zone Sud']
+  );
+
+  await query(
+    `INSERT INTO users (id, username, password_hash, display_name, role, zone_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [comZoneId, 'comzone1', await bcrypt.hash('ComZone@2025', 10), 'Com Zone Nord', 'com_zone', zoneId]
+  );
+
+  await query(
+    `INSERT INTO users (id, username, password_hash, display_name, role, zone_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [comZoneBId, 'comzone2', await bcrypt.hash('ComZone@2025', 10), 'Com Zone Sud', 'com_zone', zoneBId]
+  );
+
+  await query(
+    `INSERT INTO users (id, username, password_hash, display_name, role)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [chefBureauId, 'chefbureau1', await bcrypt.hash('ChefBureau@2025', 10), 'Chef Bureau Test', 'chef_bureau']
+  );
+
+  await query(
+    `INSERT INTO users (id, username, password_hash, display_name, role)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [csaId, 'csa1', await bcrypt.hash('Csa@2025', 10), 'CSA Test', 'chef_service_administratif']
+  );
+
+  await query(
+    `INSERT INTO users (id, username, password_hash, display_name, role)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [chefRamId, 'chefram1', await bcrypt.hash('ChefRam@2025', 10), 'Chef RAM Test', 'chef_ram']
+  );
+
+  await query(
+    `INSERT INTO categories (id, code, label) VALUES ($1, $2, $3)`,
+    [stockCategoryId, 'materiel_exploitation', "Matériel d'exploitation"]
+  );
+
+  await query(
+    `INSERT INTO equipment (id, name, category_id, zone_id, created_by)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [stockEquipmentId, 'Stock Plot Nord', stockCategoryId, zoneId, adminId]
+  );
+
+  await query(
+    `INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'quantite_stock', $2)`,
+    [stockEquipmentId, '20']
+  );
+  await query(
+    `INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'seuil_alerte', $2)`,
+    [stockEquipmentId, '5']
+  );
+  await query(
+    `INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'unite', $2)`,
+    [stockEquipmentId, 'unité(s)']
+  );
+
+  return {
+    adminId, agentId, categoryId, zoneId,
+    zoneBId, comZoneId, comZoneBId, chefBureauId, csaId, chefRamId,
+    stockCategoryId, stockEquipmentId,
+  };
 }

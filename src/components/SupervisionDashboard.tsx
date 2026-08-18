@@ -7,10 +7,12 @@ import {
   Car, Utensils, Laptop, Zap, Thermometer, Target,
   Search, ArrowDown, ArrowUp, RotateCcw, SlidersHorizontal,
   Truck, Eye, FileText, BookOpen, FlaskConical, User,
-  CalendarClock, TrendingDown, Gauge, AlertOctagon, Timer
+  CalendarClock, TrendingDown, Gauge, AlertOctagon, Timer, ClipboardCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuditLogPanel } from "@/components/AuditLogPanel";
+import { ApprobationsPanel } from "@/components/ApprobationsPanel";
+import { buildReportHtml, openReportPrintWindow } from "@/lib/reportTemplate";
 
 // ─── Types ───────────────────────────────────────────────────
 interface Equipment {
@@ -348,29 +350,32 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
   const [loading,     setLoading]    = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
-  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "audit" | "alertes" | "utilisateurs";
+  type Tab = "overview" | "inventaire" | "mouvements" | "analyse" | "journal" | "audit" | "approbations" | "alertes" | "utilisateurs";
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [activeCat,  setActiveCat]  = useState("all");
   const [searchInv,  setSearchInv]  = useState("");
   const [allUsers,   setAllUsers]   = useState<any[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
+  const [auditSummary, setAuditSummary] = useState<{ userId: string; userName: string; total: number; lastAt: string }[]>([]);
   const [searchMov,  setSearchMov]  = useState("");
   const [filterType, setFilterType] = useState("all");
   const [journalSearch, setJournalSearch] = useState("");
 
   const fetchAll = useCallback(async () => {
     try {
-      const [eqRes, mvRes, usersRes, onlineRes] = await Promise.all([
+      const [eqRes, mvRes, usersRes, onlineRes, auditRes] = await Promise.all([
         apiFetch("/api/equipment"),
         apiFetch("/api/movements"),
         apiFetch("/api/admin/users").catch(() => null),
         apiFetch("/api/admin/users/online").catch(() => null),
+        apiFetch("/api/admin/audit-logs/summary").catch(() => null),
       ]);
       if (eqRes.ok) { const ct = eqRes.headers.get("content-type") || ""; if (ct.includes("json")) setEquipment(await eqRes.json()); }
       if (mvRes.ok) { const ct = mvRes.headers.get("content-type") || ""; if (ct.includes("json")) setMovements(await mvRes.json()); else setMovements([]); }
       else setMovements([]);
       if (usersRes?.ok) setAllUsers(await usersRes.json());
       if (onlineRes?.ok) setOnlineUsers(await onlineRes.json());
+      if (auditRes?.ok) setAuditSummary(await auditRes.json());
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -602,153 +607,25 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       </tr>`;
     }).join("");
 
-    const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Rapport HELIOS — ${dateStr}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; color: #1e293b; font-size: 11px; background: #fff; }
-    @page { size: A4; margin: 1.5cm 1.8cm; }
-
-    /* ── En-tête officielle ── */
-    .header-official {
-      display: grid;
-      grid-template-columns: 1fr 110px 1fr;
-      align-items: center;
-      gap: 8px;
-      padding-bottom: 10px;
-      border-bottom: 2.5px solid #f39c12;
-      margin-bottom: 14px;
-    }
-    .header-fr { text-align: center; line-height: 1.6; }
-    .header-en { text-align: center; line-height: 1.6; }
-    .header-logo { text-align: center; }
-    .header-logo img { width: 100px; height: 100px; object-fit: contain; }
-    .header-fr p, .header-en p { font-size: 7.5px; font-weight: bold; color: #1a252f; }
-    .header-fr .stars, .header-en .stars { font-size: 6px; color: #94a3b8; font-weight: normal; }
-    .header-fr .main, .header-en .main { font-size: 9.5px; font-weight: 900; color: #1a252f; }
-    .header-fr .sub-info { font-size: 7px; font-style: italic; margin-top: 6px; color: #555; text-align: left; }
-    .header-en .sub-info { font-size: 7px; font-style: italic; margin-top: 6px; color: #555; text-align: right; }
-
-    /* ── Titre du document ── */
-    .doc-title { text-align: center; margin: 12px 0 4px; }
-    .doc-title h1 { font-size: 14px; font-weight: 900; text-transform: uppercase; color: #1a252f; letter-spacing: 1px; }
-    .doc-title p  { font-size: 9px; color: #64748b; margin-top: 2px; }
-    .orange-line  { border: none; border-top: 2px solid #f39c12; margin: 10px 0; }
-
-    /* ── Section titre ── */
-    .section-title {
-      font-size: 9px; font-weight: 900; text-transform: uppercase;
-      letter-spacing: 1.5px; color: #0d1b2a;
-      border-left: 3px solid #f39c12;
-      padding-left: 8px; margin: 18px 0 8px;
-    }
-
-    /* ── KPIs ── */
-    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 4px; }
-    .kpi {
-      background: #0d1b2a; border-radius: 6px; padding: 10px 6px;
-      text-align: center; color: white;
-    }
-    .kpi-val { font-size: 22px; font-weight: 900; line-height: 1; }
-    .kpi-lbl { font-size: 7px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-top: 3px; }
-
-    /* ── Tableaux ── */
-    table { width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 4px; }
-    thead tr { background: #0d1b2a; }
-    thead th {
-      color: white; padding: 7px 8px; text-align: left;
-      font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.8px;
-      border-bottom: 2px solid #f39c12;
-    }
-    thead th.center { text-align: center; }
-    tbody td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
-    tbody tr:hover { background: #f1f5f9 !important; }
-
-    /* ── Signatures ── */
-    .signatures {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 40px; margin-top: 36px; padding-top: 16px;
-      border-top: 1px solid #e2e8f0;
-    }
-    .sig-block { text-align: center; }
-    .sig-title { font-size: 8.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; color: #1a252f; margin-bottom: 40px; }
-    .sig-line { border-top: 1px solid #94a3b8; margin: 0 20px; padding-top: 4px; font-size: 7.5px; color: #94a3b8; }
-
-    /* ── Footer ── */
-    .doc-footer {
-      margin-top: 24px; padding-top: 8px;
-      border-top: 1px solid #e2e8f0;
-      display: flex; justify-content: space-between; align-items: center;
-      font-size: 7px; color: #94a3b8;
-    }
-
-    /* ── Print ── */
-    @media print {
-      .no-print { display: none; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    }
-  </style>
-</head>
-<body>
-
-  <!-- ══ EN-TÊTE OFFICIELLE ══ -->
-  <div class="header-official">
-    <div class="header-fr">
-      <p>REPUBLIQUE DU CAMEROUN</p>
-      <p class="stars">************</p>
-      <p style="font-style:italic">Paix – Travail – Patrie</p>
-      <p class="stars">************</p>
-      <p>PRESIDENCE DE LA REPUBLIQUE</p>
-      <p class="stars">************</p>
-      <p>SERVICES DU CONSEILLER TECHNIQUE</p>
-      <p class="stars">************</p>
-      <p class="main">PROJET HELIOS</p>
-      <p class="stars">************</p>
-      <p class="sub-info">Yaoundé, le ${dateStr}</p>
-    </div>
-
-    <div class="header-logo">
-      <img src="/logo.jpg" alt="Logo HELIOS" />
-    </div>
-
-    <div class="header-en">
-      <p>REPUBLIC OF CAMEROON</p>
-      <p class="stars">************</p>
-      <p style="font-style:italic">Peace – Work – Fatherland</p>
-      <p class="stars">************</p>
-      <p>PRESIDENCY OF THE REPUBLIC</p>
-      <p class="stars">************</p>
-      <p>TECHNICAL ADVISOR SERVICES</p>
-      <p class="stars">************</p>
-      <p class="main">HELIOS PROJECT</p>
-      <p class="stars">************</p>
-      <p class="sub-info">N° ______/SCT/PRC/HELIOS</p>
-    </div>
-  </div>
-
-  <!-- ══ TITRE DOCUMENT ══ -->
-  <div class="doc-title">
-    <h1>Rapport d'inventaire des ressources logistiques</h1>
-    <p>État du parc au ${dateStr} à ${timeStr} — ${equipment.length} équipements enregistrés — ${categories.length} catégories</p>
-  </div>
-  <hr class="orange-line" />
-
-  <!-- ══ I. SYNTHÈSE GLOBALE ══ -->
-  <div class="section-title">I. Tableau de bord — Synthèse globale</div>
-  <div class="kpis">
+    const html = buildReportHtml({
+      docTitle: "Rapport d'inventaire des ressources logistiques",
+      docSubtitle: `État du parc au ${dateStr} à ${timeStr} — ${equipment.length} équipements enregistrés — ${categories.length} catégories`,
+      dateStr,
+      signatureTitle: "Le Chef Suivi Projet HELIOS",
+      sections: [
+        {
+          title: "I. Tableau de bord — Synthèse globale",
+          html: `<div class="kpis" style="grid-template-columns: repeat(5, 1fr)">
     <div class="kpi"><div class="kpi-val" style="color:#fff">${total}</div><div class="kpi-lbl">Total équipements</div></div>
     <div class="kpi"><div class="kpi-val" style="color:#22c55e">${fonctionnel}</div><div class="kpi-lbl">Fonctionnels</div></div>
     <div class="kpi"><div class="kpi-val" style="color:#f59e0b">${enReparation}</div><div class="kpi-lbl">En réparation</div></div>
     <div class="kpi"><div class="kpi-val" style="color:#ef4444">${horsService}</div><div class="kpi-lbl">Hors service</div></div>
     <div class="kpi"><div class="kpi-val" style="color:#38bdf8">${disponibilite}%</div><div class="kpi-lbl">Disponibilité</div></div>
-  </div>
-
-  <!-- ══ II. RÉPARTITION PAR ZONE ══ -->
-  <div class="section-title">II. Répartition par zone</div>
-  <table>
+  </div>`,
+        },
+        {
+          title: "II. Répartition par zone",
+          html: `<table>
     <thead><tr>
       <th>Zone</th>
       <th class="center">Total</th>
@@ -758,11 +635,11 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       <th class="center">Disponibilité</th>
     </tr></thead>
     <tbody>${zoneRows}</tbody>
-  </table>
-
-  <!-- ══ III. RÉPARTITION PAR CATÉGORIE ══ -->
-  <div class="section-title">III. Répartition par catégorie</div>
-  <table>
+  </table>`,
+        },
+        {
+          title: "III. Répartition par catégorie",
+          html: `<table>
     <thead><tr>
       <th>Catégorie</th>
       <th class="center">Total</th>
@@ -772,11 +649,11 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       <th class="center">Disponibilité</th>
     </tr></thead>
     <tbody>${catRows}</tbody>
-  </table>
-
-  <!-- ══ IV. INVENTAIRE DÉTAILLÉ ══ -->
-  <div class="section-title">IV. Inventaire détaillé</div>
-  <table>
+  </table>`,
+        },
+        {
+          title: "IV. Inventaire détaillé",
+          html: `<table>
     <thead><tr>
       <th>Nom / Désignation</th>
       <th>Catégorie</th>
@@ -787,36 +664,12 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       <th>Marque / Modèle</th>
     </tr></thead>
     <tbody>${inventaireRows}</tbody>
-  </table>
+  </table>`,
+        },
+      ],
+    });
 
-  <!-- ══ SIGNATURES ══ -->
-  <div class="signatures">
-    <div class="sig-block">
-      <div class="sig-title">Le Directeur d'Instruction</div>
-      <div class="sig-line">Signature &amp; Cachet</div>
-    </div>
-    <div class="sig-block">
-      <div class="sig-title">Le Chef Suivi Projet HELIOS</div>
-      <div class="sig-line">Signature &amp; Cachet</div>
-    </div>
-  </div>
-
-  <!-- ══ FOOTER ══ -->
-  <div class="doc-footer">
-    <span>SYSTÈME HELIOS — Gestion des Ressources Logistiques G-Logistique v1.2</span>
-    <span>Document généré le ${dateStr} à ${timeStr} — USAGE INTERNE</span>
-  </div>
-
-</body>
-</html>`;
-
-    const win = window.open("", "_blank");
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 800);
-    }
+    openReportPrintWindow(html);
   }
 
   // ─── Filtrages ────────────────────────────────────────────────
@@ -850,23 +703,21 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
     { id: "analyse",       label: "Analyse",                         icon: <FlaskConical size={13} /> },
     { id: "journal",       label: `Journal (${journal.length})`,     icon: <BookOpen size={13} /> },
     { id: "audit",         label: "Journal global",                  icon: <Shield size={13} /> },
+    { id: "approbations",  label: "Approbations",                    icon: <ClipboardCheck size={13} /> },
     { id: "alertes",       label: `Alertes (${alerts.length})`,      icon: <AlertTriangle size={13} /> },
     { id: "utilisateurs",  label: `Utilisateurs (${allUsers.length})`, icon: <User size={13} /> },
   ] as { id: Tab; label: string; icon: React.ReactNode }[];
 
   return (
-    <div className="flex flex-col gap-6 animate-in fade-in duration-500">
+    <div className="flex flex-col gap-6 animate-in fade-in duration-500 [&>*]:min-w-0">
 
       {/* ── En-tête ── */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-[11px] font-bold text-accent uppercase tracking-[2px] mb-1">
-            <Shield size={12} /><span>Chef Service Administratif — Centre de Supervision</span>
-          </div>
+        <div className="min-w-0">
           <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100">Tableau de Bord Global</h2>
           <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
-            Actualisé à {lastRefresh.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} · Rafraîchissement auto 60s
+            Actualisé à {lastRefresh.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -920,7 +771,7 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       </div>
 
       {/* ── Tabs ── */}
-      <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit flex-wrap">
+      <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit flex-wrap mx-auto">
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black transition-all ${
@@ -981,30 +832,23 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       {/* ══ TAB INVENTAIRE ══ */}
       {activeTab === "inventaire" && (
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {categories.map(cat => (
+                <button key={cat.id} onClick={() => setActiveCat(cat.id)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-black border transition-all flex items-center gap-1 shrink-0 ${activeCat === cat.id ? "bg-brand-orange text-white border-brand-orange" : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600"}`}>
+                  {getCatIcon(cat.label, 11)}{cat.label} · {equipment.filter(e => e.category_id === cat.id).length}
+                </button>
+              ))}
+              <Button variant="outline" size="sm" className="h-8 text-[10px] font-bold border-slate-200 dark:border-slate-600 dark:text-slate-300 gap-1 shrink-0 ml-auto" onClick={exportInventaireCSV}>
+                <Download size={11} />Export
+              </Button>
+            </div>
+            <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-300 dark:text-slate-500" />
               <input placeholder="Chercher nom, n° série, immat, zone..."
                 className="w-full pl-10 pr-4 h-9 text-sm bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-500 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-accent/20 transition-all"
                 value={searchInv} onChange={e => setSearchInv(e.target.value)} />
-            </div>
-            <div className="flex gap-1 flex-wrap">
-              <button onClick={() => setActiveCat("all")}
-                className={`px-3 py-1.5 rounded-full text-[11px] font-black border transition-all ${activeCat === "all" ? "bg-slate-900 dark:bg-slate-600 text-white border-slate-900" : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600"}`}>
-                Tout · {total}
-              </button>
-              {categories.map(cat => (
-                <button key={cat.id} onClick={() => setActiveCat(cat.id)}
-                  className={`px-3 py-1.5 rounded-full text-[11px] font-black border transition-all flex items-center gap-1 ${activeCat === cat.id ? "bg-brand-orange text-white border-brand-orange" : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600"}`}>
-                  {getCatIcon(cat.label, 11)}{cat.label} · {equipment.filter(e => e.category_id === cat.id).length}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-[10px] text-slate-400 font-bold">{filteredInventaire.length} résultats</span>
-              <Button variant="outline" size="sm" className="h-8 text-[10px] font-bold border-slate-200 dark:border-slate-600 dark:text-slate-300 gap-1" onClick={exportInventaireCSV}>
-                <Download size={11} />Export
-              </Button>
             </div>
           </div>
           <div className="overflow-auto max-h-[600px]">
@@ -1398,6 +1242,9 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
       {/* ══ TAB JOURNAL GLOBAL (AUDIT) ══ */}
       {activeTab === "audit" && <AuditLogPanel />}
 
+      {/* ══ TAB APPROBATIONS (CSA) ══ */}
+      {activeTab === "approbations" && <ApprobationsPanel />}
+
       {/* ══ TAB ALERTES ══ */}
       {activeTab === "alertes" && (
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
@@ -1504,13 +1351,11 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
                     <tr><td colSpan={6} className="h-20 text-center text-xs text-slate-300 italic">Aucun utilisateur</td></tr>
                   ) : allUsers.map(u => {
                     const isOnline = onlineUsers.some(o => o.userId === u.id);
-                    // Compter les opérations de cet utilisateur
-                    const opCount = movements.filter(m =>
-                      m.performed_by_name === u.display_name || m.performed_by_name === u.username
-                    ).length;
-                    const lastOp = movements.filter(m =>
-                      m.performed_by_name === u.display_name || m.performed_by_name === u.username
-                    ).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                    // Compter TOUTES les actions de cet utilisateur (Journal global d'audit :
+                    // connexions, config, mouvements, gestion des comptes, etc.)
+                    const summary = auditSummary.find(a => a.userId === u.id);
+                    const opCount = summary?.total ?? 0;
+                    const lastOpDate = summary?.lastAt;
 
                     return (
                       <tr key={u.id} className="border-b border-zinc-100 dark:border-slate-700 hover:bg-zinc-50 dark:hover:bg-slate-700/50 transition-colors">
@@ -1542,7 +1387,7 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
                         </td>
                         <td className="px-5 py-3">
                           <p className="text-[11px] font-black text-slate-700 dark:text-slate-300">{opCount} opération{opCount !== 1 ? "s" : ""}</p>
-                          {lastOp && <p className="text-[10px] text-slate-400">Dernière: {fmtDate(lastOp.created_at)}</p>}
+                          {lastOpDate && <p className="text-[10px] text-slate-400">Dernière: {fmtDate(lastOpDate)}</p>}
                         </td>
                         <td className="px-5 py-3">
                           {isOnline ? (
