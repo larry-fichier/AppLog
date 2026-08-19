@@ -262,6 +262,14 @@ export async function initSchema() {
       console.log('[DB] Migration: colonne zone_id ajoutée à users.');
     } catch (e) {}
 
+    // ── Migration : mot de passe par défaut à changer obligatoirement ──
+    // Coché par l'admin lors d'une réinitialisation — force l'utilisateur à
+    // définir son propre mot de passe avant d'accéder au reste de l'application.
+    try {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false`);
+      console.log('[DB] Migration: colonne must_change_password ajoutée à users.');
+    } catch (e) {}
+
     // ── Migration : nouveaux rôles Module 2 (chef_bureau, chef_ram, com_zone).
     //    users.role est un enum Postgres (user_role) sur cette base — sans effet
     //    si la colonne est un simple VARCHAR (le type n'existe alors pas).

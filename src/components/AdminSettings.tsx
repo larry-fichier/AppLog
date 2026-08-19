@@ -60,6 +60,7 @@ export function AdminSettings() {
   const [resetUser, setResetUser] = useState<any>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [mustChangePassword, setMustChangePassword] = useState(true);
   const [resetting, setResetting] = useState(false);
   const [activeTab, setActiveTab] = useState("users");
 
@@ -268,13 +269,14 @@ export function AdminSettings() {
       const res = await apiFetch(`/api/admin/users/${resetUser.uid}/password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newPassword }),
+        body: JSON.stringify({ newPassword, mustChangePassword }),
       });
       if (res.ok) {
         toast.success("Mot de passe réinitialisé avec succès");
         setResetDialogOpen(false);
         setNewPassword("");
         setConfirmPassword("");
+        setMustChangePassword(true);
         setResetUser(null);
       } else {
         const err = await res.json();
@@ -891,9 +893,20 @@ export function AdminSettings() {
                 placeholder="••••••••"
               />
             </div>
+            <label className="flex items-start gap-2.5 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={mustChangePassword}
+                onChange={(e) => setMustChangePassword(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0"
+              />
+              <span>
+                Mot de passe par défaut — l'utilisateur devra le changer à sa prochaine connexion
+              </span>
+            </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setResetDialogOpen(false)}>
+            <Button variant="outline" onClick={() => { setResetDialogOpen(false); setMustChangePassword(true); }}>
               Annuler
             </Button>
             <Button onClick={handleResetPassword} disabled={resetting}>

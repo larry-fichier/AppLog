@@ -186,17 +186,17 @@ export class AdminService {
     return { success: true };
   }
 
-  static async resetPassword(id: string, newPassword: string) {
+  static async resetPassword(id: string, newPassword: string, mustChangePassword: boolean = false) {
     if (!id || !newPassword) throw new Error("ID et nouveau mot de passe sont obligatoires");
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     const { rows } = await query(`
       UPDATE users
-      SET password_hash = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2 AND deleted_at IS NULL
+      SET password_hash = $1, must_change_password = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3 AND deleted_at IS NULL
       RETURNING id, username
-    `, [passwordHash, id]);
+    `, [passwordHash, mustChangePassword, id]);
 
     if (rows.length === 0) throw new Error("Utilisateur non trouvé");
     return rows[0];

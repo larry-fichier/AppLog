@@ -38,12 +38,30 @@ export class AuthService {
     return {
       token,
       user: {
-        id:          user.id,
-        username:    user.username,
-        displayName: user.display_name,
-        role:        user.role,
-        zoneId:      user.zone_id,
+        id:                  user.id,
+        username:            user.username,
+        displayName:         user.display_name,
+        role:                user.role,
+        zoneId:              user.zone_id,
+        mustChangePassword:  user.must_change_password === true,
       }
     };
+  }
+
+  static async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const { rows } = await query(
+      `SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      [userId]
+    );
+    if (rows.length === 0) throw new Error("Utilisateur non trouvé");
+
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) throw new Error("Mot de passe actuel incorrect");
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await query(
+      `UPDATE users SET password_hash = $1, must_change_password = false, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [passwordHash, userId]
+    );
   }
 }

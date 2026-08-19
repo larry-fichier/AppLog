@@ -420,11 +420,12 @@ export async function createApp() {
   app.get("/api/auth/me", authenticateToken, (req: any, res) => {
     res.json({
       user: {
-        id:          req.user.id,
-        username:    req.user.username,
-        displayName: req.user.display_name,
-        role:        req.user.role,
-        zoneId:      req.user.zone_id,
+        id:                  req.user.id,
+        username:            req.user.username,
+        displayName:         req.user.display_name,
+        role:                req.user.role,
+        zoneId:              req.user.zone_id,
+        mustChangePassword:  req.user.must_change_password === true,
       }
     });
   });
@@ -2372,18 +2373,38 @@ export async function createApp() {
   });
 
   app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req: any, res) => {
-    const { newPassword } = req.body;
+    const { newPassword, mustChangePassword } = req.body;
     if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
     const pwdError = validatePassword(newPassword);
     if (pwdError) return res.status(400).json({ error: pwdError });
     try {
-      const resetUser = await AdminService.resetPassword(req.params.id, newPassword);
+      const resetUser = await AdminService.resetPassword(req.params.id, newPassword, mustChangePassword === true);
       recordAudit('USER_PASSWORD_RESET', req.user, {
-        targetUserId: req.params.id, targetUsername: resetUser.username,
+        targetUserId: req.params.id, targetUsername: resetUser.username, mustChangePassword: mustChangePassword === true,
       }, req.ip);
       res.json({ success: true, user: resetUser });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Erreur serveur" });
+    }
+  });
+
+  // ── Changement de mot de passe par l'utilisateur lui-même ──────
+  // Utilisé aussi bien pour un changement volontaire que pour le passage
+  // obligatoire après un mot de passe par défaut (must_change_password).
+  app.post("/api/auth/change-password", authenticateToken, async (req: any, res) => {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Mot de passe actuel et nouveau mot de passe requis" });
+    }
+    const pwdError = validatePassword(newPassword);
+    if (pwdError) return res.status(400).json({ error: pwdError });
+    try {
+      await AuthService.changePassword(req.user.id, currentPassword, newPassword);
+      recordAudit('USER_PASSWORD_CHANGED_SELF', req.user, {}, req.ip);
+      res.json({ success: true });
+    } catch (err: any) {
+      const status = err.message === "Mot de passe actuel incorrect" ? 401 : 500;
+      res.status(status).json({ error: err.message || "Erreur serveur" });
     }
   });
 

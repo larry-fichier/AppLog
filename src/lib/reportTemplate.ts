@@ -145,7 +145,7 @@ export function buildReportHtml(opts: ReportOptions): string {
     </div>
 
     <div class="header-logo">
-      <img src="/logo.jpg" alt="Logo HELIOS" />
+      <img src="/logo.png" alt="Logo HELIOS" />
     </div>
 
     <div class="header-en">

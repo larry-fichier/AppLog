@@ -188,7 +188,7 @@ export function EquipmentDashboard({
 
   // com_zone inclus : son parc est déjà restreint à sa propre zone côté serveur
   // (/api/equipment), donc ça ne lui montre que l'armement de sa zone.
-  const canSeeArmement = ["admin", "chef_service_administratif", "csph", "com_zone"].includes(activeRole);
+  const canSeeArmement = ["admin", "chef_bureau", "chef_service_administratif", "csph", "com_zone"].includes(activeRole);
 
   useEffect(() => {
     apiFetch("/api/config")

@@ -14,7 +14,7 @@ import {
   ChevronDown, ChevronRight, Box,
   Car, Utensils, Laptop, Zap, Thermometer,
   Truck, Archive, ShieldAlert,
-  Bell, Moon, Sun, Package, ClipboardCheck,
+  Bell, Moon, Sun, Package, ClipboardCheck, KeyRound,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
@@ -138,6 +138,49 @@ export default function App() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword]   = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // ── Changement de mot de passe obligatoire (mot de passe par défaut) ──
+  const [forceCurrentPassword, setForceCurrentPassword] = useState("");
+  const [forceNewPassword, setForceNewPassword]         = useState("");
+  const [forceConfirmPassword, setForceConfirmPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword]     = useState(false);
+
+  const handleForcedPasswordChange = async (e: { preventDefault(): void }) => {
+    e.preventDefault();
+    if (!forceCurrentPassword || !forceNewPassword || !forceConfirmPassword) {
+      toast.error("Tous les champs sont obligatoires.");
+      return;
+    }
+    if (forceNewPassword !== forceConfirmPassword) {
+      toast.error("Les nouveaux mots de passe ne correspondent pas.");
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: forceCurrentPassword, newPassword: forceNewPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Erreur serveur");
+        return;
+      }
+      const updatedUser = { ...user, mustChangePassword: false };
+      sessionStorage.setItem("helios_user", JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      setForceCurrentPassword("");
+      setForceNewPassword("");
+      setForceConfirmPassword("");
+      toast.success("Mot de passe mis à jour avec succès.");
+    } catch {
+      toast.error("Erreur de connexion au serveur.");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
   const [loginAttempts, setLoginAttempts] = useState(0);
   const [lockUntil, setLockUntil] = useState<number | null>(null);
 
@@ -213,6 +256,7 @@ export default function App() {
     USER_ROLE_UPDATED: "a changé le rôle d'un utilisateur",
     USER_DELETED: "a supprimé un utilisateur",
     USER_PASSWORD_RESET: "a réinitialisé un mot de passe",
+    USER_PASSWORD_CHANGED_SELF: "a changé son mot de passe",
     EQUIPMENT_PANNE_DECLAREE: "a déclaré une panne",
     EQUIPMENT_REPARATION_DECLAREE: "a signalé une réparation",
     EQUIPMENT_DECLASSE: "a déclassé un équipement",
@@ -242,6 +286,7 @@ export default function App() {
     USER_ROLE_UPDATED: "🔑",
     USER_DELETED: "🚫",
     USER_PASSWORD_RESET: "🔐",
+    USER_PASSWORD_CHANGED_SELF: "🔑",
     EQUIPMENT_PANNE_DECLAREE: "⚠️",
     EQUIPMENT_REPARATION_DECLAREE: "✅",
     EQUIPMENT_DECLASSE: "♻️",
@@ -730,7 +775,91 @@ export default function App() {
     <div className="flex min-h-screen bg-bg-main font-sans transition-colors duration-300">
       <Toaster position="top-right" richColors />
 
-      {user ? (
+      {user?.mustChangePassword ? (
+        /* ══ CHANGEMENT DE MOT DE PASSE OBLIGATOIRE ══ */
+        <div className="flex-1 flex items-center justify-center bg-[#fafbfc] relative overflow-hidden">
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-amber-500/5 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[30%] h-[30%] bg-accent/5 rounded-full blur-[100px]" />
+
+          <div className="w-full max-w-md z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <Card className="border-none shadow-[0_32px_64px_-12px_rgba(0,0,0,0.1)] bg-white rounded-2xl overflow-hidden">
+              <div className="h-2 w-full bg-amber-500" />
+              <div className="p-10">
+                <div className="flex flex-col items-center text-center mb-8">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center mb-6 shadow-xl shadow-amber-200/40">
+                    <KeyRound size={26} className="text-amber-500" />
+                  </div>
+                  <h2 className="text-2xl font-black text-text-dark tracking-tight mb-2">Mot de passe à changer</h2>
+                  <p className="text-sm font-medium text-[#7f8c8d]">
+                    Ce compte utilise un mot de passe par défaut. Vous devez en définir un nouveau avant de continuer.
+                  </p>
+                </div>
+
+                <form onSubmit={handleForcedPasswordChange} className="space-y-5">
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-bold text-[#636e72] uppercase tracking-[1.5px] ml-1">
+                      Mot de passe actuel (par défaut)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                      className="w-full px-4 h-12 bg-[#f8fafc] border border-border-custom rounded-xl focus:ring-4 focus:ring-accent/10 focus:border-accent outline-none transition-all font-medium text-sm"
+                      value={forceCurrentPassword}
+                      onChange={e => setForceCurrentPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-bold text-[#636e72] uppercase tracking-[1.5px] ml-1">
+                      Nouveau mot de passe
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-4 h-12 bg-[#f8fafc] border border-border-custom rounded-xl focus:ring-4 focus:ring-accent/10 focus:border-accent outline-none transition-all font-medium text-sm"
+                      value={forceNewPassword}
+                      onChange={e => setForceNewPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-bold text-[#636e72] uppercase tracking-[1.5px] ml-1">
+                      Confirmer le nouveau mot de passe
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                      className="w-full px-4 h-12 bg-[#f8fafc] border border-border-custom rounded-xl focus:ring-4 focus:ring-accent/10 focus:border-accent outline-none transition-all font-medium text-sm"
+                      value={forceConfirmPassword}
+                      onChange={e => setForceConfirmPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <Button
+                    type="submit"
+                    className="w-full h-12 bg-amber-500 hover:bg-amber-600 text-white font-black text-sm tracking-widest transition-all hover:scale-[1.02] shadow-lg shadow-amber-300/40"
+                    disabled={isChangingPassword}
+                  >
+                    {isChangingPassword ? <Loader2 className="animate-spin" /> : "DÉFINIR LE NOUVEAU MOT DE PASSE"}
+                  </Button>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full text-center text-xs font-bold text-[#b2bec3] hover:text-[#636e72] transition-colors"
+                  >
+                    Déconnexion
+                  </button>
+                </form>
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : user ? (
         <>
           {/* ══ LAYOUT SUPERVISOR (CSA + CSPH) ══ */}
           {isSupervisor ? (
@@ -740,7 +869,7 @@ export default function App() {
             >
               <header className="bg-white/80 backdrop-blur border-b border-slate-200/80 px-4 sm:px-8 py-3 sm:py-4 flex items-center justify-between flex-wrap gap-y-2 gap-x-4 sticky top-0 z-50 shadow-sm">
                 <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-                  <img src="/logo.jpg" alt="Helios Logo" className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl shadow-md shrink-0" />
+                  <img src="/logo.png" alt="Helios Logo" className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl shadow-md shrink-0" />
                   <div className="min-w-0">
                     <div className="text-sm font-black tracking-[3px] text-slate-900 uppercase leading-tight">HELIOS</div>
                     <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase truncate">Système de supervision</div>
@@ -832,7 +961,7 @@ export default function App() {
             >
               <header className="bg-white/80 backdrop-blur border-b border-slate-200/80 px-8 py-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
                 <div className="flex items-center gap-4">
-                  <img src="/logo.jpg" alt="Helios Logo" className="w-10 h-10 rounded-xl shadow-md" />
+                  <img src="/logo.png" alt="Helios Logo" className="w-10 h-10 rounded-xl shadow-md" />
                   <div>
                     <div className="text-sm font-black tracking-[3px] text-slate-900 uppercase leading-tight">HELIOS</div>
                     <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase">Chef RAM</div>
@@ -928,7 +1057,7 @@ export default function App() {
               <aside className="w-64 bg-sidebar-bg text-text-light flex flex-col py-8 shrink-0 z-50">
                 <div className="px-8 pb-10 mb-4 border-b border-white/5">
                   <div className="flex items-center gap-3">
-                    <img src="/logo.jpg" alt="Helios Logo" className="w-10 h-10 rounded-lg shadow-md hover:scale-105 transition-transform duration-300" />
+                    <img src="/logo.png" alt="Helios Logo" className="w-10 h-10 rounded-lg shadow-md hover:scale-105 transition-transform duration-300" />
                     <div className="flex flex-col">
                       <div className="text-xl font-black tracking-[2px] text-white">HELIOS</div>
                       <div className="text-[8px] font-bold text-white/30 tracking-widest uppercase">Gestion Logistique</div>
@@ -1110,7 +1239,7 @@ export default function App() {
               <div className="h-2 w-full bg-accent" />
               <div className="p-10">
                 <div className="flex flex-col items-center text-center mb-10">
-                  <img src="/logo.jpg" alt="Helios Logo" className="w-16 h-16 rounded-2xl mb-6 shadow-xl shadow-accent/20 transform -rotate-3 hover:rotate-0 transition-transform duration-500" />
+                  <img src="/logo.png" alt="Helios Logo" className="w-16 h-16 rounded-2xl mb-6 shadow-xl shadow-accent/20 transform -rotate-3 hover:rotate-0 transition-transform duration-500" />
                   <h2 className="text-3xl font-black text-text-dark tracking-tight mb-2">HELIOS PORTAL</h2>
                   <p className="text-sm font-medium text-[#7f8c8d] uppercase tracking-[3px]">Accès restreint au personnel</p>
                 </div>

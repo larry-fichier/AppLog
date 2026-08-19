@@ -619,7 +619,7 @@ export function EquipmentDialog({
       <p class="sub-info">Yaoundé, le ${dateStr}</p>
     </div>
     <div class="header-logo">
-      <img src="/logo.jpg" alt="Logo HELIOS" />
+      <img src="/logo.png" alt="Logo HELIOS" />
     </div>
     <div class="header-en">
       <p>REPUBLIC OF CAMEROON</p>

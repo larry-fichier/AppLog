@@ -38,6 +38,7 @@ export async function createTestQuery() {
       display_name VARCHAR(255),
       role VARCHAR(50) DEFAULT 'agent_logistique',
       zone_id UUID REFERENCES zones(id),
+      must_change_password BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
       deleted_at TIMESTAMP
