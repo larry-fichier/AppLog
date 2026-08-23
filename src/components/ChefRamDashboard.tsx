@@ -77,6 +77,9 @@ export function ChefRamDashboard() {
   const [panneItem, setPanneItem]       = useState<EquipmentRow | null>(null);
   const [panneDescription, setPanneDescription] = useState("");
   const [panneLoading, setPanneLoading] = useState(false);
+  const [repareItem, setRepareItem]       = useState<EquipmentRow | null>(null);
+  const [repareNote, setRepareNote]       = useState("");
+  const [repareLoading, setRepareLoading] = useState(false);
   const [historyItem, setHistoryItem]   = useState<HistoryTarget | null>(null);
 
   const [reformItem, setReformItem]         = useState<EquipmentRow | null>(null);
@@ -190,6 +193,28 @@ export function ChefRamDashboard() {
       toast.error(e.message);
     } finally {
       setPanneLoading(false);
+    }
+  }
+
+  async function handleDeclareRepare() {
+    if (!repareItem) return;
+    setRepareLoading(true);
+    try {
+      const res = await apiFetch(`/api/equipment/${repareItem.id}/repare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: repareNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`Réparation signalée pour "${repareItem.name}"`);
+      setRepareItem(null);
+      setRepareNote("");
+      fetchVehicles();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setRepareLoading(false);
     }
   }
 
@@ -389,6 +414,16 @@ export function ChefRamDashboard() {
                               >
                                 <History size={12} />Historique
                               </Button>
+                              {(item.status === "en_reparation" || item.status === "hors_service") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[11px] font-bold border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950/30 gap-1.5"
+                                  onClick={() => setRepareItem(item)}
+                                >
+                                  <CheckCircle2 size={12} />Réparé
+                                </Button>
+                              )}
                               {alreadySignaled ? (
                                 <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">Panne déjà signalée</span>
                               ) : (
@@ -585,6 +620,46 @@ export function ChefRamDashboard() {
             <Button className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black" onClick={handleDeclarePanne} disabled={panneLoading}>
               {panneLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <Wrench size={15} className="mr-2" />}
               Confirmer la panne
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog signalement de réparation / travaux effectués ── */}
+      <Dialog open={!!repareItem} onOpenChange={open => { if (!open) { setRepareItem(null); setRepareNote(""); } }}>
+        <DialogContent className="sm:max-w-[400px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-emerald-700 to-emerald-600 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <CheckCircle2 size={18} /> Signaler une réparation
+              </DialogTitle>
+              <DialogDescription className="text-emerald-100 text-xs mt-0.5 font-medium">
+                {repareItem?.name} — {repareItem ? vehiclePosition(repareItem) : ""}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="px-6 py-5 space-y-4">
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Le véhicule sera immédiatement remis au statut <strong>« Fonctionnel »</strong> — CSPH, CSA, chef de bureau et chef RAM seront notifiés.
+            </p>
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Travaux effectués (optionnel)</Label>
+              <textarea
+                placeholder="Ex : plaquettes de frein changées, fuite colmatée, vidange effectuée..."
+                value={repareNote}
+                onChange={e => setRepareNote(e.target.value)}
+                rows={3}
+                className="w-full text-sm border border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+          </div>
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => { setRepareItem(null); setRepareNote(""); }} disabled={repareLoading}>
+              Annuler
+            </Button>
+            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black" onClick={handleDeclareRepare} disabled={repareLoading}>
+              {repareLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <CheckCircle2 size={15} className="mr-2" />}
+              Confirmer la réparation
             </Button>
           </DialogFooter>
         </DialogContent>

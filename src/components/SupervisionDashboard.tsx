@@ -383,6 +383,14 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
 
   useEffect(() => { fetchAll(); const t = setInterval(fetchAll, 60000); return () => clearInterval(t); }, [fetchAll]);
 
+  // Resynchronisation immédiate sur événement distant (panne/réparation, etc.)
+  // au lieu d'attendre jusqu'à 60s de polling.
+  useEffect(() => {
+    const onDataChanged = () => fetchAll();
+    window.addEventListener("helios:data-changed", onDataChanged);
+    return () => window.removeEventListener("helios:data-changed", onDataChanged);
+  }, [fetchAll]);
+
   // ─── Stats ──────────────────────────────────────────────────
   const total        = equipment.length;
   const fonctionnel  = equipment.filter(e => e.status === "fonctionnel").length;

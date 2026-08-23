@@ -210,6 +210,7 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
       { key: "marque",         label: "Marque",                 type: "text",     placeholder: "Ex: Dell, HP, Lenovo...", required: true },
       { key: "modele",         label: "Modèle / Référence",     type: "text",     placeholder: "Ex: Latitude 5420" },
       { key: "numero_serie",   label: "Numéro de Série",        type: "text",     placeholder: "Ex: SN-DELL-12345" },
+      { key: "position",       label: "Emplacement / N° local", type: "text",     placeholder: "Ex: Bureau 58, Service Informatique", section: "Affectation" },
       { key: "date_entree",    label: "Date d'entrée",          type: "date",     placeholder: "", section: "Dates" },
       { key: "date_deploiement", label: "Date de déploiement",  type: "date",     placeholder: "" },
       { key: "observation",    label: "Observation",            type: "textarea", placeholder: "Affectation, remarques...", fullWidth: true, section: "Notes" },

@@ -60,6 +60,7 @@ const NOTABLE_AUDIT_ACTIONS = new Set([
   'EQUIPMENT_DELETED',
   'EQUIPMENT_DECLASSE',
   'EQUIPMENT_REFORME',
+  'EQUIPMENT_REFORME_ANNULEE',
   'CONFIG_UPDATED',
   'ADMIN_RECOVER',
   'USER_CREATED',
@@ -312,12 +313,20 @@ export async function createApp() {
         username: result.user.username, display_name: result.user.displayName,
       }, { username: identifier }, req.ip);
 
-      // Déconnecter toute session SSE existante pour cet utilisateur
+      // Déconnecter toute session SSE existante pour cet utilisateur (autre
+      // appareil) OU partageant ce même navigateur (autre onglet, autre compte)
+      // — le cookie auth_token est partagé par tous les onglets d'un navigateur,
+      // donc laisser un onglet "autre compte" ouvert lui permettrait d'agir
+      // silencieusement avec la nouvelle identité sans avertissement.
+      const loginBrowserId = validated.browserId;
       Array.from(sseClients)
-        .filter((c: any) => c.userId === result.user.id)
+        .filter((c: any) => c.userId === result.user.id || (loginBrowserId && c.browserId === loginBrowserId))
         .forEach((c: any) => {
+          const message = c.userId === result.user.id
+            ? "Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté."
+            : "Une nouvelle connexion a eu lieu sur ce navigateur. Vous avez été déconnecté.";
           try {
-            c.res.write(`data: ${JSON.stringify({ type: 'session_replaced' })}\n\n`);
+            c.res.write(`data: ${JSON.stringify({ type: 'session_replaced', payload: { message } })}\n\n`);
             c.res.end();
           } catch {}
           sseClients.delete(c);
@@ -973,6 +982,43 @@ export async function createApp() {
       );
 
       recordAudit('EQUIPMENT_REFORME', req.user, { equipmentId: id, recipient: validated.recipient, note: validated.note || undefined }, req.ip);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Restauration d'un véhicule réformé — inverse exactement /reformer :
+  // réintègre le véhicule dans le parc actif tout en conservant la trace de
+  // la réforme et de son annulation (mouvements, audit).
+  app.post("/api/equipment/:id/restaurer", authenticateToken, async (req: any, res) => {
+    const { id } = req.params;
+    if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
+
+    const authorized = req.user.role === "admin" || req.user.role === "chef_ram";
+    if (!authorized) return res.status(403).json({ error: "Action non autorisée" });
+
+    try {
+      const { rows: [equip] } = await query(
+        `SELECT name, status FROM equipment WHERE id = $1`,
+        [id]
+      );
+      if (!equip) return res.status(404).json({ error: 'Équipement introuvable' });
+      if (equip.status !== 'reforme') {
+        return res.status(409).json({ error: "Ce véhicule n'est pas réformé" });
+      }
+
+      await query(
+        `UPDATE equipment SET status = 'fonctionnel', deleted_at = NULL, updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      await query(
+        `INSERT INTO movements (equipment_id, type, performed_by, performed_by_name, previous_status, new_status, note)
+         VALUES ($1, 'ajustement', $2, $3, 'reforme', 'fonctionnel', 'Réforme annulée — véhicule réintégré au parc actif')`,
+        [id, req.user.id, req.user.display_name || req.user.username || 'Inconnu']
+      );
+
+      recordAudit('EQUIPMENT_REFORME_ANNULEE', req.user, { equipmentId: id, equipmentName: equip.name }, req.ip);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2137,7 +2183,7 @@ export async function createApp() {
     res.flushHeaders();
     res.write("data: {\"type\":\"connected\"}\n\n");
 
-    const client = { res, userId: req.user.id, role: req.user.role, zoneId: req.user.zone_id };
+    const client = { res, userId: req.user.id, role: req.user.role, zoneId: req.user.zone_id, browserId: typeof req.query.browserId === 'string' ? req.query.browserId : undefined };
     sseClients.add(client);
     const keepAlive = setInterval(() => {
       try { res.write(": ping\n\n"); }

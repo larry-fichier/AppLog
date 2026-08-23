@@ -232,6 +232,15 @@ export function EquipmentDashboard({
 
   useEffect(() => { fetchData(); }, []);
 
+  // Se resynchronise dès qu'un événement distant (panne/réparation signalée
+  // par un chef RAM, mouvement, etc.) arrive par SSE — sans ça les statistiques
+  // (en réparation / hors service) restent figées jusqu'au prochain montage.
+  useEffect(() => {
+    const onDataChanged = () => fetchData();
+    window.addEventListener("helios:data-changed", onDataChanged);
+    return () => window.removeEventListener("helios:data-changed", onDataChanged);
+  }, []);
+
   const activeCategoryObj = categories.find(c => c.id === activeCategory);
   const isVehicle = activeCategoryObj ? isVehicleCategory(activeCategoryObj.label) : false;
   const categoriesVisibles = categories.filter(cat => {
@@ -379,7 +388,9 @@ export function EquipmentDashboard({
         </TableCell>
       );
     } else if (l.includes("informatique") || l.includes("it") || l.includes("ordinateur") || l.includes("electronique")) {
-      specificInfo = d.date_mise_utilisation
+      specificInfo = d.position
+        ? `📍 ${d.position}`
+        : d.date_mise_utilisation
         ? `Service : ${new Date(d.date_mise_utilisation).toLocaleDateString("fr-FR")}` : null;
     } else {
       const extra = Object.entries(d).find(([k, v]) =>

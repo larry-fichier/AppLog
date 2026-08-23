@@ -132,6 +132,41 @@ function getDisplayName(user: any): string {
   return user?.displayName || user?.username || "Utilisateur";
 }
 
+// ── Helper : identifiant de ce navigateur ───────────────────────────────────
+// Le cookie auth_token est partagé par tous les onglets d'un même navigateur —
+// se connecter avec un autre compte dans un nouvel onglet écrase silencieusement
+// la session des autres onglets, qui continuent alors d'agir avec la mauvaise
+// identité sans le savoir (faille de sécurité). localStorage, contrairement au
+// cookie, n'est jamais transmis au serveur automatiquement mais reste partagé
+// entre tous les onglets d'un même navigateur : cet identifiant sert donc à
+// reconnaître "ces connexions viennent du même navigateur" pour forcer la
+// déconnexion de TOUS les autres onglets dès qu'une nouvelle connexion a lieu,
+// quel que soit le compte qui y était ouvert.
+function getBrowserId(): string {
+  try {
+    let id = localStorage.getItem("helios_browser_id");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("helios_browser_id", id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
+// ── Helper : dernière ouverture de la cloche par cet utilisateur ───────────
+// Persisté en localStorage (et non en state) pour survivre au rechargement de
+// page : sans ça, le backfill ne pourrait jamais distinguer « déjà vu lors
+// d'une session précédente » de « manqué pendant une absence ».
+function getLastSeenNotifTime(userId: string): number {
+  try { return Number(localStorage.getItem(`helios_notif_seen_${userId}`)) || 0; }
+  catch { return 0; }
+}
+function setLastSeenNotifTime(userId: string, time: number): void {
+  try { localStorage.setItem(`helios_notif_seen_${userId}`, String(time)); } catch {}
+}
+
 export default function App() {
   const [user, setUser]           = useState<any>(null);
   const [loading, setLoading]     = useState(true);
@@ -228,6 +263,7 @@ export default function App() {
   const [showNotifs, setShowNotifs] = useState(false);
   const notifRef = React.useRef<EventSource | null>(null);
   const notifIdRef = React.useRef(0);
+  const notifWrapperRef = React.useRef<HTMLDivElement | null>(null);
 
   // Types de notification qui portent une "opération" que chef_bureau/CSA/admin
   // peuvent traiter directement (approuver/rejeter/marquer ravitaillé) en cliquant dessus.
@@ -261,6 +297,7 @@ export default function App() {
     EQUIPMENT_REPARATION_DECLAREE: "a signalé une réparation",
     EQUIPMENT_DECLASSE: "a déclassé un équipement",
     EQUIPMENT_REFORME: "a réformé un véhicule",
+    EQUIPMENT_REFORME_ANNULEE: "a annulé la réforme d'un véhicule",
     STOCK_DECLARATION_CREATED: "a déclaré un écart de stock",
     STOCK_DECLARATION_CONFIRMED: "a confirmé son stock (sans écart)",
     STOCK_DECLARATION_APPROVED: "a approuvé une déclaration de stock",
@@ -291,6 +328,7 @@ export default function App() {
     EQUIPMENT_REPARATION_DECLAREE: "✅",
     EQUIPMENT_DECLASSE: "♻️",
     EQUIPMENT_REFORME: "🎖️",
+    EQUIPMENT_REFORME_ANNULEE: "↩️",
     STOCK_DECLARATION_CREATED: "📝",
     STOCK_DECLARATION_CONFIRMED: "✅",
     STOCK_DECLARATION_APPROVED: "✅",
@@ -342,8 +380,14 @@ export default function App() {
   // ── Backfill : peuple la cloche avec les événements critiques récents dès
   // la connexion, pour ne pas perdre les alertes émises pendant que l'onglet
   // n'était pas ouvert (les événements SSE sont éphémères, non rejouables).
+  // Seuls les événements survenus APRÈS la dernière ouverture de la cloche par
+  // cet utilisateur (horodatage persisté en localStorage) sont marqués non lus
+  // — sinon les mêmes alertes des 14 derniers jours réapparaissent lues, sans
+  // jamais déclencher le badge, et un rôle absent au moment de l'émission
+  // (chef de bureau, CSA, CSPH…) n'est jamais réellement alerté à son retour.
   React.useEffect(() => {
     if (!user) return;
+    const lastSeen = getLastSeenNotifTime(user.id);
     fetch("/api/notifications/recent", { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
       .then((rows: { type: string; payload: any; created_at: string }[]) => {
@@ -352,7 +396,7 @@ export default function App() {
           id: ++notifIdRef.current,
           message: buildNotificationMessage(row),
           type: row.type,
-          read: true,
+          read: new Date(row.created_at).getTime() <= lastSeen,
           payload: row.payload,
           created_at: row.created_at,
         }));
@@ -422,7 +466,7 @@ export default function App() {
 
   React.useEffect(() => {
     if (!user) return;
-    const es = new EventSource("/api/events", { withCredentials: true });
+    const es = new EventSource(`/api/events?browserId=${encodeURIComponent(getBrowserId())}`, { withCredentials: true });
     notifRef.current = es;
     es.onmessage = (e) => {
       try {
@@ -432,13 +476,21 @@ export default function App() {
           sessionStorage.removeItem("helios_user");
           setUser(null);
           if (notifRef.current) { notifRef.current.close(); }
-          toast.error("Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.", { duration: 8000 });
+          toast.error(
+            event.payload?.message || "Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.",
+            { duration: 8000 }
+          );
           return;
         }
         const id = ++notifIdRef.current;
         const message = buildNotificationMessage(event);
         const created_at = new Date().toISOString();
         setNotifications(prev => [{ id, message, type: event.type, read: false, payload: event.payload, created_at }, ...prev].slice(0, 50));
+        // Les tableaux de bord (EquipmentDashboard, SupervisionDashboard…) n'ont
+        // aucun autre moyen de savoir qu'un événement distant (ex : chef RAM qui
+        // signale une panne) vient de changer leurs données — sans ce signal,
+        // leurs statistiques restent figées jusqu'au prochain montage/polling.
+        window.dispatchEvent(new CustomEvent("helios:data-changed", { detail: event }));
       } catch {}
     };
     return () => { es.close(); };
@@ -452,8 +504,12 @@ export default function App() {
   const toggleNotifs = () => {
     setShowNotifs(v => {
       const next = !v;
-      if (next) markAllRead();
-      else setNotifications(prev => prev.filter(n => !n.read));
+      if (next) {
+        markAllRead();
+        if (user) setLastSeenNotifTime(user.id, Date.now());
+      } else {
+        setNotifications(prev => prev.filter(n => !n.read));
+      }
       return next;
     });
   };
@@ -461,6 +517,19 @@ export default function App() {
     setNotifications(prev => prev.filter(n => !n.read));
     setShowNotifs(false);
   };
+
+  // Ferme la cloche dès qu'un clic a lieu en dehors — sans ça elle ne se
+  // referme que via la croix ou un second clic sur la cloche elle-même.
+  React.useEffect(() => {
+    if (!showNotifs) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (notifWrapperRef.current && !notifWrapperRef.current.contains(e.target as Node)) {
+        closeNotifs();
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [showNotifs]);
 
   // ── Init auth + config ─────────────────────────────────
   useEffect(() => {
@@ -574,7 +643,7 @@ export default function App() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: identifier.trim(), password }),
+        body: JSON.stringify({ username: identifier.trim(), password, browserId: getBrowserId() }),
       });
 
       if (!res.ok) {
@@ -886,7 +955,7 @@ export default function App() {
                     {getInitial(user)}
                   </div>
                   {/* 🔔 Cloche notifications (journal global) */}
-                  <div className="relative">
+                  <div className="relative" ref={notifWrapperRef}>
                     <button
                       onClick={toggleNotifs}
                       className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
@@ -984,7 +1053,7 @@ export default function App() {
                     {getInitial(user)}
                   </div>
                   {/* 🔔 Cloche notifications */}
-                  <div className="relative">
+                  <div className="relative" ref={notifWrapperRef}>
                     <button
                       onClick={toggleNotifs}
                       className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"
@@ -1152,7 +1221,7 @@ export default function App() {
                         <span className="text-sm font-bold text-text-dark leading-tight">{userDisplayName}</span>
                       </div>
                       {/* 🔔 Cloche notifications */}
-                      <div className="relative">
+                      <div className="relative" ref={notifWrapperRef}>
                         <button
                           onClick={toggleNotifs}
                           className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors relative"

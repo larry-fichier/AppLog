@@ -36,7 +36,11 @@ export const createMovementSchema = z.object({
 export const loginSchema = z.object({
   email: z.string().email().optional(),
   username: z.string().optional(),
-  password: z.string().min(1)
+  password: z.string().min(1),
+  // Identifiant de navigateur (localStorage côté client, généré à la volée) —
+  // permet de déconnecter tous les autres onglets du MÊME navigateur à la
+  // connexion, quel que soit le compte qui y était ouvert (voir /api/events).
+  browserId: z.string().max(100).optional(),
 }).refine(
   (data) => data.email || data.username,
   { message: "Email ou username requis" }
