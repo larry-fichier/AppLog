@@ -482,10 +482,26 @@ export default function App() {
           );
           return;
         }
+        // Une alerte déjà résolue (panne réparée, déclaration tranchée,
+        // ravitaillement confirmé…) ne doit plus traîner dans la cloche —
+        // même si le tab qui la voit encore n'est pas celui qui a résolu.
+        const RESOLVES: Record<string, { clears: string; matchKey: string }> = {
+          equipment_repaired:         { clears: "equipment_critical",       matchKey: "equipment_id" },
+          stock_declaration_approved: { clears: "stock_declaration_created", matchKey: "declarationId" },
+          stock_declaration_rejected: { clears: "stock_declaration_created", matchKey: "declarationId" },
+          resupply_confirmed:         { clears: "resupply_needed",          matchKey: "requestId" },
+        };
+        const resolves = RESOLVES[event.type];
+
         const id = ++notifIdRef.current;
         const message = buildNotificationMessage(event);
         const created_at = new Date().toISOString();
-        setNotifications(prev => [{ id, message, type: event.type, read: false, payload: event.payload, created_at }, ...prev].slice(0, 50));
+        setNotifications(prev => {
+          const base = resolves
+            ? prev.filter(n => !(n.type === resolves.clears && n.payload?.[resolves.matchKey] === event.payload?.[resolves.matchKey]))
+            : prev;
+          return [{ id, message, type: event.type, read: false, payload: event.payload, created_at }, ...base].slice(0, 50);
+        });
         // Les tableaux de bord (EquipmentDashboard, SupervisionDashboard…) n'ont
         // aucun autre moyen de savoir qu'un événement distant (ex : chef RAM qui
         // signale une panne) vient de changer leurs données — sans ce signal,

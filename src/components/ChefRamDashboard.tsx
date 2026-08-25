@@ -11,7 +11,7 @@ import { EquipmentDialog } from "./EquipmentDialog";
 import { MovementHistory } from "./MovementHistory";
 import {
   Car, FileText, FileDown, Wrench, Loader2, RefreshCw, CheckCircle2, XCircle, Clock, MapPin,
-  ChevronLeft, ChevronRight, Plus, History, X, Award,
+  ChevronLeft, ChevronRight, Plus, History, X, Award, Search, Undo2,
 } from "lucide-react";
 
 const VEHICLES_PAGE_SIZE = 10;
@@ -89,6 +89,8 @@ export function ChefRamDashboard() {
 
   const [reformedVehicles, setReformedVehicles] = useState<ReformedVehicle[]>([]);
   const [reformedLoading, setReformedLoading]   = useState(false);
+  const [restoreItem, setRestoreItem]           = useState<ReformedVehicle | null>(null);
+  const [restoreLoading, setRestoreLoading]     = useState(false);
 
   const [vehicleCategories, setVehicleCategories] = useState<CategoryOption[]>([]);
   const [addVehicleOpen, setAddVehicleOpen]       = useState(false);
@@ -163,12 +165,25 @@ export function ChefRamDashboard() {
   const enReparation = vehicles.filter(v => v.status === "en_reparation").length;
   const horsService  = vehicles.filter(v => v.status === "hors_service").length;
 
+  const [searchTerm, setSearchTerm] = useState("");
+  const filteredVehicles = vehicles.filter(v => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      v.name?.toLowerCase().includes(q) ||
+      v.zone_name?.toLowerCase().includes(q) ||
+      v.station_name?.toLowerCase().includes(q) ||
+      Object.values(v.details || {}).some((val: any) => String(val).toLowerCase().includes(q))
+    );
+  });
+
   const [vehiclesPage, setVehiclesPage] = useState(1);
-  const vehiclesTotalPages = Math.max(1, Math.ceil(vehicles.length / VEHICLES_PAGE_SIZE));
+  const vehiclesTotalPages = Math.max(1, Math.ceil(filteredVehicles.length / VEHICLES_PAGE_SIZE));
   useEffect(() => {
     if (vehiclesPage > vehiclesTotalPages) setVehiclesPage(vehiclesTotalPages);
   }, [vehiclesTotalPages, vehiclesPage]);
-  const paginatedVehicles = vehicles.slice(
+  useEffect(() => { setVehiclesPage(1); }, [searchTerm]);
+  const paginatedVehicles = filteredVehicles.slice(
     (vehiclesPage - 1) * VEHICLES_PAGE_SIZE,
     vehiclesPage * VEHICLES_PAGE_SIZE
   );
@@ -243,6 +258,24 @@ export function ChefRamDashboard() {
     }
   }
 
+  async function handleRestore() {
+    if (!restoreItem) return;
+    setRestoreLoading(true);
+    try {
+      const res = await apiFetch(`/api/equipment/${restoreItem.id}/restaurer`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`"${restoreItem.name}" réintégré au parc actif`);
+      setRestoreItem(null);
+      fetchVehicles();
+      fetchReformed();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setRestoreLoading(false);
+    }
+  }
+
   function toggleEquipSelection(id: string) {
     setSelectedEquipIds(prev => {
       const next = new Set(prev);
@@ -310,6 +343,15 @@ export function ChefRamDashboard() {
           <p className="text-sm text-slate-500 dark:text-slate-400">Toutes zones confondues</p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative w-56">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-300 dark:text-slate-500" />
+            <input
+              placeholder="Chercher nom, immat., zone..."
+              className="w-full pl-10 pr-4 h-9 text-xs bg-white dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-accent/20 focus:border-accent dark:focus:border-accent transition-all"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+            />
+          </div>
           <Button variant="outline" size="sm" className="h-9 text-xs font-bold border-slate-200 dark:border-slate-600 dark:text-slate-300 gap-1.5" onClick={fetchVehicles}>
             <RefreshCw size={13} className={loading ? "animate-spin" : ""} />Actualiser
           </Button>
@@ -364,10 +406,12 @@ export function ChefRamDashboard() {
 
         <TabsContent value="vehicules" className="mt-4">
           <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-            {vehicles.length === 0 ? (
+            {filteredVehicles.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-14 text-slate-300">
                 <Car size={32} strokeWidth={1} />
-                <p className="text-sm font-bold text-slate-400">Aucun véhicule</p>
+                <p className="text-sm font-bold text-slate-400">
+                  {vehicles.length === 0 ? "Aucun véhicule" : "Aucun véhicule ne correspond à la recherche"}
+                </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -453,10 +497,10 @@ export function ChefRamDashboard() {
                 </table>
               </div>
             )}
-            {vehicles.length > VEHICLES_PAGE_SIZE && (
+            {filteredVehicles.length > VEHICLES_PAGE_SIZE && (
               <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
                 <span className="text-[10px] text-slate-400 font-bold">
-                  Page {vehiclesPage} / {vehiclesTotalPages} — {vehicles.length} véhicule{vehicles.length > 1 ? "s" : ""}
+                  Page {vehiclesPage} / {vehiclesTotalPages} — {filteredVehicles.length} véhicule{filteredVehicles.length > 1 ? "s" : ""}
                 </span>
                 <div className="flex gap-1.5">
                   <Button variant="outline" size="sm" className="h-8 px-2 text-xs" disabled={vehiclesPage <= 1}
@@ -508,14 +552,24 @@ export function ChefRamDashboard() {
                           </td>
                           <td className="px-4 py-2.5 text-xs text-slate-500 dark:text-slate-400 italic max-w-xs truncate">{v.note || "—"}</td>
                           <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-[11px] font-bold border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700 gap-1.5"
-                              onClick={() => setHistoryItem({ id: v.id, name: v.name })}
-                            >
-                              <History size={12} />Historique
-                            </Button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[11px] font-bold border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700 gap-1.5"
+                                onClick={() => setHistoryItem({ id: v.id, name: v.name })}
+                              >
+                                <History size={12} />Historique
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[11px] font-bold border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950/30 gap-1.5"
+                                onClick={() => setRestoreItem(v)}
+                              >
+                                <Undo2 size={12} />Restaurer
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                     ))}
@@ -711,6 +765,38 @@ export function ChefRamDashboard() {
             <Button className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-black" onClick={handleReformer} disabled={reformLoading}>
               {reformLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <Award size={15} className="mr-2" />}
               Confirmer la réforme
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog restauration d'un véhicule réformé ── */}
+      <Dialog open={!!restoreItem} onOpenChange={open => { if (!open) setRestoreItem(null); }}>
+        <DialogContent className="sm:max-w-[400px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-emerald-700 to-emerald-600 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <Undo2 size={18} /> Restaurer un véhicule réformé
+              </DialogTitle>
+              <DialogDescription className="text-emerald-100 text-xs mt-0.5 font-medium">
+                {restoreItem?.name}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="px-6 py-5">
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Le véhicule sera réintégré au parc actif au statut <strong>« Fonctionnel »</strong> et
+              retirera de la liste des véhicules réformés. La réforme précédente reste consultable
+              dans l'historique.
+            </p>
+          </div>
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setRestoreItem(null)} disabled={restoreLoading}>
+              Annuler
+            </Button>
+            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black" onClick={handleRestore} disabled={restoreLoading}>
+              {restoreLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <Undo2 size={15} className="mr-2" />}
+              Confirmer la restauration
             </Button>
           </DialogFooter>
         </DialogContent>

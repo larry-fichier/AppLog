@@ -2225,12 +2225,21 @@ export async function createApp() {
       const items: { type: string; payload: any; created_at: string }[] = [];
 
       if (NON_ZONE_ROLES.includes(role) || role === 'com_zone') {
+        // Une panne déjà réparée depuis (une déclaration de réparation plus
+        // récente existe pour le même équipement) ne doit plus réapparaître
+        // comme une alerte active — elle est résolue.
         const { rows: panneRows } = await query(
           `SELECT al.id, al.created_at, al.details, e.zone_id
            FROM audit_logs al
            LEFT JOIN equipment e ON e.id = NULLIF(al.details->>'equipmentId', '')::uuid
            WHERE al.action = 'EQUIPMENT_PANNE_DECLAREE'
              AND al.created_at > NOW() - INTERVAL '14 days'
+             AND NOT EXISTS (
+               SELECT 1 FROM audit_logs al2
+               WHERE al2.action = 'EQUIPMENT_REPARATION_DECLAREE'
+                 AND al2.details->>'equipmentId' = al.details->>'equipmentId'
+                 AND al2.created_at > al.created_at
+             )
            ORDER BY al.created_at DESC LIMIT 30`
         );
         for (const r of panneRows) {
@@ -2267,12 +2276,16 @@ export async function createApp() {
           });
         }
 
+        // Résolu dès que l'équipement n'est plus hors service dans son état
+        // actuel (repris en service, réparé, réformé…) — sinon l'alerte
+        // survivrait indéfiniment à sa propre résolution.
         const { rows: mvRows } = await query(
           `SELECT m.id, m.created_at, m.type, m.new_status, m.from_zone_id, e.name AS equipment_name
            FROM movements m
            LEFT JOIN equipment e ON e.id = m.equipment_id
            WHERE (m.type = 'sortie' OR m.new_status = 'hors_service')
              AND m.created_at > NOW() - INTERVAL '14 days'
+             AND e.status = 'hors_service'
            ORDER BY m.created_at DESC LIMIT 30`
         );
         for (const r of mvRows) {
@@ -2287,29 +2300,43 @@ export async function createApp() {
       }
 
       if (STOCK_APPROVAL_ROLES.includes(role)) {
-        const { rows: stockRows } = await query(
-          `SELECT id, created_at, action, details
-           FROM audit_logs
-           WHERE action IN ('STOCK_DECLARATION_CREATED', 'RESUPPLY_NEEDED')
-             AND created_at > NOW() - INTERVAL '14 days'
-           ORDER BY created_at DESC LIMIT 30`
+        // Interrogées directement sur leur état courant (pas via audit_logs) :
+        // une déclaration déjà approuvée/rejetée, ou un ravitaillement déjà
+        // pris en charge, ne sont plus "en attente" et ne doivent plus
+        // réapparaître comme alerte à traiter. Ça fournit aussi declarationId/
+        // requestId, nécessaires pour agir depuis une alerte reconstituée.
+        const { rows: declRows } = await query(
+          `SELECT sd.id, sd.created_at, sd.previous_quantity, sd.declared_quantity, sd.unite, e.name AS equipment_name
+           FROM stock_declarations sd
+           LEFT JOIN equipment e ON e.id = sd.equipment_id
+           WHERE sd.status = 'pending' AND sd.created_at > NOW() - INTERVAL '14 days'
+           ORDER BY sd.created_at DESC LIMIT 30`
         );
-        for (const r of stockRows) {
-          if (r.action === 'STOCK_DECLARATION_CREATED') {
-            items.push({
-              type: 'stock_declaration_created', created_at: r.created_at,
-              payload: {
-                equipmentName: r.details?.equipmentName,
-                previousQuantity: r.details?.previousQuantity,
-                declaredQuantity: r.details?.declaredQuantity,
-              },
-            });
-          } else {
-            items.push({
-              type: 'resupply_needed', created_at: r.created_at,
-              payload: { name: r.details?.equipmentName, quantity: r.details?.quantity },
-            });
-          }
+        for (const r of declRows) {
+          items.push({
+            type: 'stock_declaration_created', created_at: r.created_at,
+            payload: {
+              declarationId: r.id,
+              equipmentName: r.equipment_name,
+              previousQuantity: r.previous_quantity,
+              declaredQuantity: r.declared_quantity,
+              unite: r.unite,
+            },
+          });
+        }
+
+        const { rows: resupplyRows } = await query(
+          `SELECT rr.id, rr.created_at, rr.quantity_at_trigger, rr.unite, e.name AS equipment_name
+           FROM resupply_requests rr
+           LEFT JOIN equipment e ON e.id = rr.equipment_id
+           WHERE rr.status = 'open' AND rr.created_at > NOW() - INTERVAL '14 days'
+           ORDER BY rr.created_at DESC LIMIT 30`
+        );
+        for (const r of resupplyRows) {
+          items.push({
+            type: 'resupply_needed', created_at: r.created_at,
+            payload: { requestId: r.id, name: r.equipment_name, quantity: r.quantity_at_trigger, unite: r.unite },
+          });
         }
       }
 

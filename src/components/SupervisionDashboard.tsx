@@ -688,6 +688,15 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
     return matchCat && matchSearch;
   }), [equipment, activeCat, searchInv]);
 
+  // Répartition par statut du résultat filtré courant (catégorie + recherche) —
+  // permet de répondre à "combien de UPS dispo / en maintenance / hors service ?"
+  // sans avoir à compter manuellement dans la liste.
+  const inventaireStatusCounts = useMemo(() => ({
+    fonctionnel:   filteredInventaire.filter(e => e.status === "fonctionnel").length,
+    en_reparation: filteredInventaire.filter(e => e.status === "en_reparation").length,
+    hors_service:  filteredInventaire.filter(e => e.status === "hors_service").length,
+  }), [filteredInventaire]);
+
   const filteredMov = useMemo(() => movements.filter(m => {
     const matchType = filterType === "all" || m.type === filterType;
     const q = searchMov.toLowerCase();
@@ -858,6 +867,22 @@ export function SupervisionDashboard({ isBypass = false }: Props) {
                 className="w-full pl-10 pr-4 h-9 text-sm bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-500 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-accent/20 transition-all"
                 value={searchInv} onChange={e => setSearchInv(e.target.value)} />
             </div>
+            {(searchInv.trim() || activeCat !== "all") && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                  {filteredInventaire.length} résultat{filteredInventaire.length !== 1 ? "s" : ""} —
+                </span>
+                <span className="text-[11px] font-black px-2.5 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800">
+                  {inventaireStatusCounts.fonctionnel} disponible{inventaireStatusCounts.fonctionnel !== 1 ? "s" : ""}
+                </span>
+                <span className="text-[11px] font-black px-2.5 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                  {inventaireStatusCounts.en_reparation} en maintenance
+                </span>
+                <span className="text-[11px] font-black px-2.5 py-1 rounded-full border bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                  {inventaireStatusCounts.hors_service} hors service
+                </span>
+              </div>
+            )}
           </div>
           <div className="overflow-auto max-h-[600px]">
             <table className="w-full text-sm">
