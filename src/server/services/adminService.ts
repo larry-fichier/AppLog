@@ -64,11 +64,19 @@ export class AdminService {
       }
 
       // ── Catégories ────────────────────────────────────────
-      const catIds = categories.map((c: any) => c.id).filter(Boolean);
-      if (catIds.length > 0) {
-        await q(
-          `UPDATE categories SET is_active = false WHERE NOT (id = ANY($1::uuid[]))`,
-          [catIds]
+      // Création ET suppression réservées au développeur (migration directe
+      // en base) : le comportement d'une catégorie (champs du formulaire,
+      // colonne Détails, règles véhicule/stock...) est câblé en dur par
+      // mots-clés dans le code, pas piloté par une configuration — une
+      // catégorie créée ou retirée depuis l'UI casserait ce câblage. On
+      // n'autorise ici que la mise à jour (renommage) de catégories déjà
+      // existantes ; aucune n'est jamais désactivée depuis cet endpoint.
+      const { rows: existingCats } = await q(`SELECT id FROM categories`);
+      const existingCatIds = new Set(existingCats.map((r: any) => r.id));
+      const unknownCats = categories.filter((c: any) => c.id && !existingCatIds.has(c.id));
+      if (unknownCats.length > 0) {
+        throw new Error(
+          `Création de catégorie désactivée (${unknownCats.map((c: any) => c.label || c.name).join(', ')}) — contactez un développeur.`
         );
       }
       for (const cat of categories) {

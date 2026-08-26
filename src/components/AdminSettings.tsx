@@ -605,16 +605,12 @@ export function AdminSettings() {
                       onChange={e => updateInList("categories", cat.id, { label: e.target.value })}
                       className="h-9 text-xs font-bold bg-white"
                     />
-                    <Button variant="ghost" size="icon" onClick={() => removeFromList("categories", cat.id)}
-                      className="text-red-400 h-8 w-8">
-                      <Trash2 size={14} />
-                    </Button>
                   </div>
                 ))}
-                <Button variant="outline" className="h-9 border-dashed text-[10px] font-black uppercase"
-                  onClick={() => addToList("categories", { id: generateUUID(), label: "Nouvelle Catégorie", icon: "Box" })}>
-                  <Plus size={12} className="mr-2" />Catégorie
-                </Button>
+                <div className="flex items-center gap-2 h-9 px-3 rounded-lg border border-dashed border-zinc-200 text-[10px] font-bold text-muted-foreground bg-zinc-50/50">
+                  <AlertCircle size={13} className="shrink-0" />
+                  Création réservée au développeur
+                </div>
               </CardContent>
             </Card>
           </div>

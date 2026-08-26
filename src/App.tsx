@@ -265,16 +265,42 @@ export default function App() {
   const notifIdRef = React.useRef(0);
   const notifWrapperRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Types de notification qui portent une "opération" que chef_bureau/CSA/admin
-  // peuvent traiter directement (approuver/rejeter/marquer ravitaillé) en cliquant dessus.
-  const ACTIONABLE_NOTIF_TYPES = ["stock_declaration_created", "resupply_needed"];
+  // Types de notification qui portent une "opération" que chef_bureau/CSA/admin/
+  // com_zone peuvent traiter directement (approuver/rejeter/confirmer/marquer
+  // ravitaillé) en cliquant dessus.
+  const ACTIONABLE_NOTIF_TYPES = ["stock_declaration_created", "resupply_needed", "resupply_fulfilled", "movement_transfer_requested"];
   // Types purement informatifs — cliquables par TOUS les rôles qui les reçoivent
   // (ex: chef_ram sur une panne/réparation véhicule) pour voir le détail complet,
   // sans action d'approbation associée.
   const READONLY_DETAIL_TYPES = ["equipment_critical", "equipment_repaired"];
+  // ── Modèle de persistence façon "notification d'app" ────────────────────
+  // critical : une situation qui attend une action ou une résolution (panne,
+  // écart de stock, ravitaillement livré à confirmer, transfert à approuver…) —
+  // reste affichée même après lecture, tant que la cause n'est pas résolue
+  // (résolution détectée en direct via SSE, ou disparue du backfill une fois
+  // l'état sous-jacent changé côté serveur).
+  // info : un simple compte-rendu (réparation faite, déclaration tranchée,
+  // transfert déjà décidé…) — s'efface dès que l'utilisateur l'a vue.
+  const NOTIF_KIND: Record<string, "critical" | "info"> = {
+    equipment_critical:          "critical",
+    stock_alerte:                "critical",
+    stock_declaration_created:   "critical",
+    resupply_needed:             "critical",
+    resupply_fulfilled:          "critical",
+    movement_transfer_requested: "critical",
+    equipment_repaired:          "info",
+    stock_declaration_approved:  "info",
+    stock_declaration_rejected:  "info",
+    resupply_confirmed:          "info",
+    movement_transfer_approved:  "info",
+    movement_transfer_rejected:  "info",
+    equipment_created:           "info",
+    audit_log:                   "info",
+  };
   const [alertDetail, setAlertDetail] = useState<{ type: string; payload: any; created_at?: string } | null>(null);
   const [alertActionLoading, setAlertActionLoading] = useState(false);
   const [alertNote, setAlertNote] = useState("");
+  const [alertQty, setAlertQty] = useState("0");
 
   // ── Libellés lisibles pour le journal global d'audit (admin + supervision) ──
   const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -362,7 +388,7 @@ export default function App() {
     } else if (event.type === "resupply_needed") {
       return `🚚 Ravitaillement nécessaire — ${event.payload?.name || "Équipement"} (${event.payload?.quantity} ${event.payload?.unite || ""})`;
     } else if (event.type === "resupply_fulfilled") {
-      return `📦 Ravitaillement effectif — confirmez la réception`;
+      return `📦 Ravitaillement livré — ${event.payload?.equipmentName || "Équipement"} — confirmez la réception`;
     } else if (event.type === "resupply_confirmed") {
       return `✅ Réception de ravitaillement confirmée`;
     } else if (event.type === "movement_transfer_requested") {
@@ -517,6 +543,13 @@ export default function App() {
   // Une fois vues (ouvertes puis refermées), les notifications ne doivent plus
   // encombrer la cloche — seules celles arrivées depuis (donc encore non lues)
   // doivent rester.
+  // Une notification "info" (lue) sort de la liste ; une notification
+  // "critical" y reste tant que sa cause n'est pas résolue, même une fois lue —
+  // sinon un chef de bureau qui ouvre la cloche par réflexe ferait disparaître
+  // une déclaration de stock qu'il n'a pourtant pas encore traitée.
+  const pruneReadNotifs = (prev: typeof notifications) =>
+    prev.filter(n => !n.read || NOTIF_KIND[n.type] === "critical");
+
   const toggleNotifs = () => {
     setShowNotifs(v => {
       const next = !v;
@@ -524,13 +557,13 @@ export default function App() {
         markAllRead();
         if (user) setLastSeenNotifTime(user.id, Date.now());
       } else {
-        setNotifications(prev => prev.filter(n => !n.read));
+        setNotifications(pruneReadNotifs);
       }
       return next;
     });
   };
   const closeNotifs = () => {
-    setNotifications(prev => prev.filter(n => !n.read));
+    setNotifications(pruneReadNotifs);
     setShowNotifs(false);
   };
 
@@ -704,39 +737,62 @@ export default function App() {
 
   const currentRole     = user?.role || "agent_logistique";
   const userDisplayName = getDisplayName(user);
-  const isAdmin         = ["admin"].includes(currentRole);
+  // Parité complète avec l'admin sur le volet Configuration (logique métier,
+  // comptes utilisateurs, journal global) — le chef de bureau en a besoin au
+  // quotidien, en particulier pour le journal d'audit.
+  const canSeeSettings  = ["admin", "chef_bureau"].includes(currentRole);
   const isSupervisor    = ["chef_service_administratif", "csph"].includes(currentRole);
   const isComZone       = currentRole === "com_zone";
   const isChefRam       = currentRole === "chef_ram";
   const canActOnAlerts  = ["admin", "chef_bureau", "chef_service_administratif"].includes(currentRole);
+  // resupply_fulfilled se traite côté com_zone (confirmer réception) — les
+  // autres types actionnables restent réservés aux rôles d'approbation.
+  function canActOnNotif(type: string): boolean {
+    if (type === "resupply_fulfilled") return isComZone;
+    return canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(type);
+  }
 
   function openAlertDetail(n: { type: string; payload?: any; created_at?: string }) {
-    const isActionable = canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type);
+    const isActionable = canActOnNotif(n.type);
     const isReadonly   = READONLY_DETAIL_TYPES.includes(n.type);
     if (!isActionable && !isReadonly) return;
     setAlertNote("");
+    setAlertQty("0");
     setAlertDetail({ type: n.type, payload: n.payload, created_at: n.created_at });
   }
 
-  async function handleAlertDecision(action: "approve" | "reject" | "fulfill") {
+  async function handleAlertDecision(action: "approve" | "reject" | "fulfill" | "confirm") {
     if (!alertDetail) return;
     setAlertActionLoading(true);
     try {
-      const url = alertDetail.type === "resupply_needed"
-        ? `/api/resupply-requests/${alertDetail.payload.requestId}/fulfill`
-        : `/api/stock-declarations/${alertDetail.payload.declarationId}/${action}`;
+      let url: string;
+      let body: Record<string, any>;
+      if (alertDetail.type === "resupply_needed") {
+        url = `/api/resupply-requests/${alertDetail.payload.requestId}/fulfill`;
+        body = { note: alertNote.trim() || undefined };
+      } else if (alertDetail.type === "resupply_fulfilled") {
+        url = `/api/resupply-requests/${alertDetail.payload.requestId}/confirm`;
+        body = { quantite_recue: parseInt(alertQty, 10) || 0, note: alertNote.trim() || undefined };
+      } else if (alertDetail.type === "movement_transfer_requested") {
+        url = `/api/movements/${alertDetail.payload.movementId}/${action}`;
+        body = { note: alertNote.trim() || undefined };
+      } else {
+        url = `/api/stock-declarations/${alertDetail.payload.declarationId}/${action}`;
+        body = { note: alertNote.trim() || undefined };
+      }
       const res = await fetch(url, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: alertNote.trim() || undefined }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
       toast.success(
         action === "fulfill" ? "Ravitaillement marqué effectif"
-        : action === "approve" ? "Déclaration approuvée"
-        : "Déclaration rejetée"
+        : action === "confirm" ? "Réception confirmée"
+        : action === "approve" ? "Approuvé"
+        : "Rejeté"
       );
       setAlertDetail(null);
     } catch (e: any) {
@@ -807,7 +863,7 @@ export default function App() {
 
   // ── Résolution de la vue active ────────────────────────
   function resolveView(): React.ReactNode {
-    if (activeMenu === "settings" && isAdmin) {
+    if (activeMenu === "settings" && canSeeSettings) {
       return <AdminSettings />;
     }
     if (activeMenu === "movements") {
@@ -994,12 +1050,12 @@ export default function App() {
                           {notifications.length === 0 ? (
                             <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
                           ) : notifications.map(n => {
-                            const clickable = (canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type)) || READONLY_DETAIL_TYPES.includes(n.type);
+                            const clickable = canActOnNotif(n.type) || READONLY_DETAIL_TYPES.includes(n.type);
                             return (
                               <div key={n.id}
                                 onClick={() => openAlertDetail(n)}
                                 className={`px-4 py-2.5 text-xs ${
-                                  ["equipment_critical", "resupply_needed", "stock_declaration_created"].includes(n.type)
+                                  NOTIF_KIND[n.type] === "critical"
                                     ? "bg-red-50 text-red-700"
                                     : "text-slate-700"
                                 } ${clickable ? "cursor-pointer hover:brightness-95 transition-all" : ""}`}>
@@ -1199,7 +1255,7 @@ export default function App() {
                   })}
 
                   <div className="mt-auto pt-4 border-t border-white/5 flex flex-col gap-0.5">
-                    {isAdmin && (
+                    {canSeeSettings && (
                       <button
                         onClick={() => setActiveMenu("settings")}
                         className={`w-full px-4 py-3 flex items-center gap-3 text-[13px] rounded-lg cursor-pointer transition-all font-bold border ${
@@ -1260,12 +1316,12 @@ export default function App() {
                               {notifications.length === 0 ? (
                                 <p className="text-xs text-slate-400 text-center py-6">Aucune notification</p>
                               ) : notifications.map(n => {
-                                const clickable = (canActOnAlerts && ACTIONABLE_NOTIF_TYPES.includes(n.type)) || READONLY_DETAIL_TYPES.includes(n.type);
+                                const clickable = canActOnNotif(n.type) || READONLY_DETAIL_TYPES.includes(n.type);
                                 return (
                                   <div key={n.id}
                                     onClick={() => openAlertDetail(n)}
                                     className={`px-4 py-2.5 text-xs ${
-                                      ["equipment_critical", "resupply_needed", "stock_declaration_created"].includes(n.type)
+                                      NOTIF_KIND[n.type] === "critical"
                                         ? "bg-red-50 text-red-700"
                                         : "text-slate-700"
                                     } ${clickable ? "cursor-pointer hover:brightness-95 transition-all" : ""}`}>
@@ -1490,6 +1546,82 @@ export default function App() {
                   disabled={alertActionLoading} onClick={() => handleAlertDecision("fulfill")}>
                   {alertActionLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : null}
                   Marquer ravitaillé
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {alertDetail?.type === "resupply_fulfilled" && (
+            <>
+              <div className="bg-gradient-to-br from-emerald-700 to-emerald-600 text-white px-6 py-5">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-black text-white">Confirmer la réception</DialogTitle>
+                  <DialogDescription className="text-emerald-100 text-xs mt-0.5 font-medium">
+                    {alertDetail.payload?.equipmentName}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div className="space-y-2">
+                  <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                    Quantité reçue <span className="text-red-400">*</span>
+                  </span>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={alertQty}
+                    onChange={e => setAlertQty(e.target.value)}
+                    className="h-11 text-lg font-black text-center dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                  <p className="text-[11px] text-slate-400">S'ajoute au stock actuel de la zone.</p>
+                </div>
+                <Input
+                  placeholder="Note (optionnel)"
+                  value={alertNote}
+                  onChange={e => setAlertNote(e.target.value)}
+                  className="h-9 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </div>
+              <DialogFooter className="px-6 pb-5 flex gap-3">
+                <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setAlertDetail(null)} disabled={alertActionLoading}>
+                  Fermer
+                </Button>
+                <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("confirm")}>
+                  {alertActionLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : null}
+                  Confirmer
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {alertDetail?.type === "movement_transfer_requested" && (
+            <>
+              <div className="bg-gradient-to-br from-blue-700 to-blue-600 text-white px-6 py-5">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-black text-white">Transfert en attente d'approbation</DialogTitle>
+                  <DialogDescription className="text-blue-100 text-xs mt-0.5 font-medium">
+                    {alertDetail.payload?.equipmentName}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <Input
+                  placeholder="Motif (obligatoire pour rejeter)"
+                  value={alertNote}
+                  onChange={e => setAlertNote(e.target.value)}
+                  className="h-9 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </div>
+              <DialogFooter className="px-6 pb-5 flex gap-3">
+                <Button variant="outline" className="flex-1 border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950/30"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("reject")}>
+                  Rejeter
+                </Button>
+                <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+                  disabled={alertActionLoading} onClick={() => handleAlertDecision("approve")}>
+                  {alertActionLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : null}
+                  Approuver
                 </Button>
               </DialogFooter>
             </>

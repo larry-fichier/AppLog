@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagrammes UML HELIOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --paper: #f5f7fb;
+    --panel: #ffffff;
+    --ink: #16202e;
+    --muted: #5b6b82;
+    --line: #dbe1ea;
+    --navy: #0d1b2a;
+    --navy-2: #142943;
+    --orange: #f39c12;
+    --orange-ink: #8a5406;
+    --ok: #1f8a5f;
+    --shadow: 0 1px 2px rgba(13,27,42,0.04), 0 8px 24px -12px rgba(13,27,42,0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0a121d;
+      --panel: #101c2c;
+      --ink: #e7edf6;
+      --muted: #93a2b8;
+      --line: #223247;
+      --navy: #0d1b2a;
+      --navy-2: #1a2f4a;
+      --orange: #f5a623;
+      --orange-ink: #ffd68a;
+      --ok: #3fbf88;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0a121d;
+    --panel: #101c2c;
+    --ink: #e7edf6;
+    --muted: #93a2b8;
+    --line: #223247;
+    --navy: #0d1b2a;
+    --navy-2: #1a2f4a;
+    --orange: #f5a623;
+    --orange-ink: #ffd68a;
+    --ok: #3fbf88;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  ::selection { background: var(--orange); color: var(--navy); }
+
+  a { color: inherit; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  /* ── Sidebar ── */
+  .rail {
+    position: sticky; top: 0; align-self: start;
+    height: 100vh;
+    background: var(--navy);
+    color: #cdd9e8;
+    padding: 28px 22px;
+    display: flex; flex-direction: column; gap: 22px;
+    border-right: 1px solid var(--line);
+  }
+  .rail .brand {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .rail .brand .mark {
+    width: 34px; height: 34px; border-radius: 7px;
+    background: linear-gradient(155deg, var(--orange), #c97a05);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Oswald", sans-serif; font-weight: 700; color: var(--navy); font-size: 16px;
+    flex-shrink: 0;
+  }
+  .rail .brand .name {
+    font-family: "Oswald", sans-serif; font-weight: 600; letter-spacing: 0.06em;
+    font-size: 15px; color: #fff; text-transform: uppercase;
+  }
+  .rail .brand .sub {
+    font-size: 10.5px; color: #92a4bc; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .rail nav { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  .rail .group-label {
+    font-family: "Oswald", sans-serif;
+    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: #6f84a1; margin: 16px 0 6px; padding: 0 10px;
+  }
+  .rail .group-label:first-child { margin-top: 0; }
+  .rail a.nav-link {
+    text-decoration: none;
+    font-size: 13px; color: #b9c6da;
+    padding: 7px 10px; border-radius: 6px;
+    display: flex; align-items: baseline; gap: 8px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .rail a.nav-link .n {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: #5c7093; flex-shrink: 0;
+  }
+  .rail a.nav-link:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .rail .foot {
+    margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 11px; color: #64789a;
+  }
+
+  /* ── Main ── */
+  main { padding: 56px 64px 120px; max-width: 1180px; }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .rail { position: static; height: auto; }
+    main { padding: 40px 24px 100px; }
+  }
+
+  .doc-head { margin-bottom: 54px; }
+  .doc-head .kicker {
+    font-family: "Oswald", sans-serif; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--orange-ink);
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  }
+  .doc-head .kicker::before {
+    content: ""; width: 22px; height: 2px; background: var(--orange);
+  }
+  .doc-head h1 {
+    font-family: "Oswald", sans-serif; font-weight: 700; font-size: 40px;
+    letter-spacing: -0.01em; margin: 0 0 14px; text-wrap: balance;
+    color: var(--ink);
+  }
+  .doc-head p.lede {
+    max-width: 62ch; color: var(--muted); font-size: 15.5px; margin: 0;
+  }
+  .doc-head .meta {
+    margin-top: 22px; display: flex; gap: 22px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+  }
+  .doc-head .meta b { color: var(--ink); font-weight: 500; }
+
+  section.plate { margin-bottom: 64px; scroll-margin-top: 24px; }
+  .plate-head { margin-bottom: 18px; }
+  .plate-head .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--orange-ink);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px;
+    display: block;
+  }
+  .plate-head h2 {
+    font-family: "Oswald", sans-serif; font-weight: 600; font-size: 24px;
+    margin: 0 0 6px; color: var(--ink); text-wrap: balance;
+  }
+  .plate-head .cap {
+    color: var(--muted); font-size: 14px; max-width: 68ch; margin: 0;
+  }
+
+  .frame {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+    overflow-x: auto;
+    position: relative;
+  }
+  .frame::before {
+    content: "";
+    position: absolute; top: 12px; left: 12px; width: 10px; height: 10px;
+    border-top: 1.5px solid var(--line); border-left: 1.5px solid var(--line);
+  }
+  .frame::after {
+    content: "";
+    position: absolute; bottom: 12px; right: 12px; width: 10px; height: 10px;
+    border-bottom: 1.5px solid var(--line); border-right: 1.5px solid var(--line);
+  }
+  .frame .mermaid { display: flex; justify-content: center; min-width: fit-content; }
+
+  .actors-legend {
+    margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px 18px;
+    font-size: 12px; color: var(--muted); font-family: "IBM Plex Mono", monospace;
+  }
+  .actors-legend span b { color: var(--ink); font-weight: 500; font-family: "IBM Plex Sans", sans-serif; }
+
+  hr.rule { border: none; border-top: 1px solid var(--line); margin: 60px 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark">H</div>
+      <div>
+        <div class="name">HELIOS</div>
+        <div class="sub">Diagrammes UML</div>
+      </div>
+    </div>
+    <nav>
+      <span class="group-label">Structure</span>
+      <a class="nav-link" href="#classes"><span class="n">01</span> Diagramme de classes</a>
+      <a class="nav-link" href="#cas-usage"><span class="n">02</span> Cas d'utilisation</a>
+
+      <span class="group-label">Séquences</span>
+      <a class="nav-link" href="#seq-connexion"><span class="n">03</span> Connexion & mot de passe</a>
+      <a class="nav-link" href="#seq-transfert"><span class="n">04</span> Transfert entre zones</a>
+      <a class="nav-link" href="#seq-stock"><span class="n">05</span> Déclaration de stock</a>
+      <a class="nav-link" href="#seq-ravito"><span class="n">06</span> Ravitaillement de zone</a>
+      <a class="nav-link" href="#seq-panne"><span class="n">07</span> Panne & notification</a>
+      <a class="nav-link" href="#seq-reforme"><span class="n">08</span> Réforme d'un véhicule</a>
+    </nav>
+    <div class="foot">Système de Gestion G-Logistique — dérivé du code source</div>
+  </aside>
+
+  <main>
+    <header class="doc-head">
+      <div class="kicker">Projet HELIOS — Documentation technique</div>
+      <h1>Diagrammes UML</h1>
+      <p class="lede">
+        Modèle de classes, cas d'utilisation par rôle et scénarios de séquence des huit
+        flux métier les plus significatifs du système de gestion logistique — construits
+        à partir du schéma de base de données et du code applicatif.
+      </p>
+      <div class="meta">
+        <span>Notation : <b>UML</b> (rendu Mermaid)</span>
+        <span>Rôles couverts : <b>7</b></span>
+        <span>Séquences : <b>6</b></span>
+      </div>
+    </header>
+
+    <!-- ══════════ 01 · CLASSES ══════════ -->
+    <section class="plate" id="classes">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 01 — Classes</span>
+        <h2>Modèle de domaine</h2>
+        <p class="cap">
+          Traduction en classes UML du schéma relationnel : chaque table devient une classe,
+          chaque clé étrangère une association portant sa cardinalité. <code>equipment_details</code>
+          matérialise le modèle clé/valeur qui porte les caractéristiques propres à chaque
+          catégorie d'actif (numéro de série, quantité de stock, kilométrage…) sans colonnes dédiées.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+classDiagram
+    direction LR
+
+    class Zone {
+      +UUID id
+      +String name
+      +Boolean isActive
+    }
+    class Station {
+      +UUID id
+      +String name
+      +Boolean isActive
+    }
+    class Category {
+      +UUID id
+      +String code
+      +String label
+      +Boolean isActive
+    }
+    class CategoryField {
+      +UUID id
+      +String label
+      +String type
+      +Int sortOrder
+    }
+    class User {
+      +UUID id
+      +String username
+      +String displayName
+      +Boolean mustChangePassword
+    }
+    class Equipment {
+      +UUID id
+      +String name
+      +DateTime createdAt
+      +DateTime deletedAt
+    }
+    class EquipmentDetail {
+      +UUID id
+      +String fieldKey
+      +String fieldValue
+    }
+    class Movement {
+      +UUID id
+      +String status
+      +DateTime createdAt
+    }
+    class StockDeclaration {
+      +UUID id
+      +Int previousQuantity
+      +Int declaredQuantity
+      +String status
+    }
+    class ResupplyRequest {
+      +UUID id
+      +Int seuilAlerte
+      +String status
+    }
+    class AuditLog {
+      +UUID id
+      +String action
+      +JSON details
+      +DateTime createdAt
+    }
+    class UserRole {
+      &lt;&lt;enumeration&gt;&gt;
+      admin
+      chef_bureau
+      chef_ram
+      com_zone
+      agent_logistique
+      chef_service_administratif
+      csph
+    }
+    class EquipmentStatus {
+      &lt;&lt;enumeration&gt;&gt;
+      fonctionnel
+      en_reparation
+      hors_service
+      declasse
+      reforme
+    }
+
+    Zone "1" --> "0..*" Station : contient
+    Zone "1" --> "0..*" Equipment : localise
+    Zone "0..1" --> "0..*" User : affecte
+    Category "1" --> "0..*" Equipment : classe
+    Category "1" --> "0..*" CategoryField : définit
+    Station "1" --> "0..*" Equipment : localise
+    Equipment "1" --> "0..*" EquipmentDetail : décrit
+    Equipment "1" --> "0..*" Movement : historique
+    Equipment "1" --> "0..*" StockDeclaration : concerne
+    Equipment "1" --> "0..*" ResupplyRequest : concerne
+    User "1" --> "0..*" Equipment : crée
+    User "1" --> "0..*" Movement : effectue
+    User "1" --> "0..*" AuditLog : génère
+    User ..> UserRole : «use»
+    Equipment ..> EquipmentStatus : «use»
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 02 · CAS D'UTILISATION ══════════ -->
+    <section class="plate" id="cas-usage">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 02 — Cas d'utilisation</span>
+        <h2>Actions par rôle</h2>
+        <p class="cap">
+          Les sept rôles de l'application et les actions qu'ils déclenchent, regroupées par
+          domaine fonctionnel. Un même cas d'utilisation apparaît une fois par rôle autorisé —
+          par exemple « Déclarer un équipement » relie Admin, Chef de Bureau, Chef RAM (véhicules
+          uniquement), COM Zone (sa zone) et Agent Logistique.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+flowchart LR
+    Admin["Admin"]
+    ChefBureau["Chef de Bureau"]
+    ChefRam["Chef RAM"]
+    ComZone["COM Zone"]
+    CSA["Chef Service<br/>Administratif"]
+    CSPH["CSPH"]
+    AgentLog["Agent<br/>Logistique"]
+
+    subgraph SYS["Système HELIOS"]
+      direction TB
+      subgraph PARC["Gestion du parc"]
+        UC1(["Déclarer un équipement"])
+        UC2(["Enregistrer un mouvement"])
+        UC3(["Approuver / rejeter<br/>un transfert"])
+        UC4(["Déclasser un équipement"])
+        UC5(["Réformer un véhicule"])
+        UC6(["Déclarer une panne"])
+        UC7(["Signaler une réparation"])
+      end
+      subgraph STOCK["Stock d'exploitation"]
+        UC8(["Déclarer le stock<br/>de sa zone"])
+        UC9(["Approuver / rejeter<br/>une déclaration de stock"])
+        UC10(["Entrée / sortie de<br/>stock central"])
+        UC11(["Confirmer réception<br/>d'un ravitaillement"])
+      end
+      subgraph ADM["Administration"]
+        UC12(["Gérer les comptes<br/>utilisateurs"])
+        UC13(["Réinitialiser un mot<br/>de passe"])
+        UC14(["Configurer catégories /<br/>zones / bureaux"])
+      end
+      subgraph SUP["Suivi et reporting"]
+        UC15(["Consulter le journal<br/>d'audit"])
+        UC16(["Générer un rapport<br/>entrées / sorties"])
+      end
+    end
+
+    Admin --> UC1 & UC2 & UC3 & UC4 & UC5 & UC6 & UC7 & UC9 & UC10 & UC12 & UC13 & UC14 & UC15 & UC16
+    ChefBureau --> UC1 & UC2 & UC3 & UC4 & UC9 & UC10 & UC15 & UC16
+    ChefRam --> UC1 & UC2 & UC5 & UC6 & UC7 & UC15
+    ComZone --> UC1 & UC2 & UC4 & UC6 & UC7 & UC8 & UC11 & UC16
+    CSA --> UC3 & UC9 & UC15 & UC16
+    CSPH --> UC15
+    AgentLog --> UC1 & UC2 & UC4 & UC10
+        </pre>
+      </div>
+      <div class="actors-legend">
+        <span><b>Admin</b> — accès complet</span>
+        <span><b>Chef de Bureau</b> — logistique centrale</span>
+        <span><b>Chef RAM</b> — véhicules uniquement</span>
+        <span><b>COM Zone</b> — portée limitée à sa zone</span>
+        <span><b>CSA</b> — approbation & supervision</span>
+        <span><b>CSPH</b> — lecture seule</span>
+        <span><b>Agent Logistique</b> — saisie de terrain</span>
+      </div>
+    </section>
+
+    <hr class="rule" />
+
+    <!-- ══════════ 03 · SÉQUENCE CONNEXION ══════════ -->
+    <section class="plate" id="seq-connexion">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 03 — Séquence</span>
+        <h2>Connexion et mot de passe obligatoire</h2>
+        <p class="cap">
+          Quand un admin a coché « mot de passe par défaut » lors d'une réinitialisation,
+          l'utilisateur reste bloqué derrière un écran de changement de mot de passe jusqu'à
+          en définir un nouveau — l'état est porté par le serveur (<code>must_change_password</code>),
+          pas seulement par l'écran de connexion.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor U as Utilisateur
+    participant F as Frontend
+    participant API as API /api/auth
+    participant DB as PostgreSQL
+
+    U->>F: Identifiant + mot de passe
+    F->>API: POST /api/auth/login
+    API->>DB: SELECT * FROM users WHERE username = ?
+    DB-->>API: Utilisateur + password_hash
+    API->>API: bcrypt.compare(password, hash)
+    alt Identifiants invalides
+      API-->>F: 401 Identifiants invalides
+      F-->>U: Message d'erreur
+    else Identifiants valides
+      API->>API: Génère un JWT (jti unique)
+      API-->>F: 200 { user, mustChangePassword }
+      F->>F: sessionStorage.setItem("helios_user", …)
+      alt mustChangePassword = true
+        F-->>U: Écran « Mot de passe à changer » (bloquant)
+        U->>F: Ancien + nouveau mot de passe
+        F->>API: POST /api/auth/change-password
+        API->>DB: UPDATE users SET password_hash,<br/>must_change_password = false
+        DB-->>API: OK
+        API-->>F: 200 succès
+        F-->>U: Accès normal à l'application
+      else mustChangePassword = false
+        F-->>U: Accès normal à l'application
+      end
+    end
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 04 · SÉQUENCE TRANSFERT ══════════ -->
+    <section class="plate" id="seq-transfert">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 04 — Séquence</span>
+        <h2>Demande et approbation d'un transfert</h2>
+        <p class="cap">
+          Un COM Zone ne peut pas déplacer un équipement librement : son mouvement de type
+          <code>transfert</code> part en attente et doit être validé par le Chef de Bureau
+          ou la CSA avant que la zone de l'équipement ne change réellement.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor CZ as COM Zone
+    participant F as Frontend
+    participant API as API /api/movements
+    participant DB as PostgreSQL
+    actor CB as Chef de Bureau / CSA
+
+    CZ->>F: Sélectionne équipement + zone destination
+    F->>API: POST /api/movements (type = transfert)
+    API->>DB: INSERT movements (status = pending)
+    API-->>F: 201 Créé
+    API--)CB: SSE movement_transfer_requested
+    Note over CB: Notification temps réel (cloche)
+    CB->>F: Ouvre l'onglet Mouvements
+    F->>API: GET /api/movements?status=pending
+    API->>DB: SELECT … WHERE status = pending
+    DB-->>API: Transferts en attente
+    API-->>F: 200
+    CB->>F: Approuve ou rejette (motif obligatoire si rejet)
+    F->>API: POST /:id/approve ou /:id/reject
+    API->>DB: UPDATE movements SET status, decision_note
+    API->>DB: UPDATE equipment SET zone_id (si approuvé)
+    API--)CZ: SSE movement_transfer_approved | rejected
+    Note over CZ: Notification temps réel, motif si rejeté
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 05 · SÉQUENCE STOCK ══════════ -->
+    <section class="plate" id="seq-stock">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 05 — Séquence</span>
+        <h2>Déclaration d'un écart de stock</h2>
+        <p class="cap">
+          Une déclaration qui confirme le stock existant s'applique immédiatement ; un écart
+          crée une <code>stock_declaration</code> en attente, arbitrée par le Chef de Bureau
+          ou la CSA avant de toucher le stock réel de la zone.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor CZ as COM Zone
+    participant API as API /api/equipment/:id/declare-stock
+    participant DB as PostgreSQL
+    actor CB as Chef de Bureau / CSA
+
+    CZ->>API: POST { quantité déclarée }
+    API->>DB: Lit quantite_stock actuelle
+    alt Quantité = stock actuel
+      API->>DB: INSERT movements (ajustement, aucun écart)
+      API-->>CZ: 200 Déclaration confirmée
+    else Écart détecté
+      API->>DB: INSERT stock_declarations (status = pending)
+      API--)CB: SSE stock_declaration_created
+      Note over CB: Notification temps réel
+      CB->>API: POST /approve ou /reject (motif obligatoire si rejet)
+      alt Approuvé
+        API->>DB: UPDATE equipment_details SET quantite_stock
+        API->>DB: UPDATE stock_declarations SET status = approved
+        API--)CZ: SSE stock_declaration_approved
+      else Rejeté
+        API->>DB: UPDATE stock_declarations SET status = rejected,<br/>decision_note
+        API--)CZ: SSE stock_declaration_rejected (avec motif)
+      end
+    end
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 06 · SÉQUENCE RAVITAILLEMENT ══════════ -->
+    <section class="plate" id="seq-ravito">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 06 — Séquence</span>
+        <h2>Sortie de stock central vers une zone</h2>
+        <p class="cap">
+          Quand le Chef de Bureau envoie du stock central vers une zone, l'instance de stock
+          de cette zone est créée si besoin et le ravitaillement est enregistré déjà
+          « fulfilled » — le COM Zone n'a plus qu'à confirmer réception à l'arrivée du matériel.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor CB as Chef de Bureau
+    participant API as API /api/equipment/:id/stock-sortie
+    participant DB as PostgreSQL
+    actor CZ as COM Zone (destination)
+
+    CB->>API: POST { quantité, zone destination }
+    API->>DB: Décrémente quantite_stock (article central)
+    API->>DB: INSERT movements (type = sortie)
+    API->>DB: Cherche / crée l'instance d'équipement de la zone
+    API->>DB: INSERT resupply_requests (status = fulfilled)
+    API--)CZ: SSE resupply_fulfilled
+    Note over CZ: Apparaît dans l'onglet Ravitaillements
+    CZ->>API: POST /:id/confirm { quantité reçue }
+    API->>DB: UPDATE equipment_details SET quantite_stock<br/>+= quantité reçue (zone)
+    API->>DB: UPDATE resupply_requests SET status = confirmed
+    API->>DB: INSERT movements (type = entree, zone)
+    API--)CB: SSE resupply_confirmed
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 07 · SÉQUENCE PANNE ══════════ -->
+    <section class="plate" id="seq-panne">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 07 — Séquence</span>
+        <h2>Déclaration de panne et notification</h2>
+        <p class="cap">
+          La panne est diffusée en direct par SSE à tous les rôles concernés sauf son auteur ;
+          un rôle non connecté au moment de l'envoi la retrouve à sa prochaine connexion via
+          un rejeu construit depuis le journal d'audit, pas seulement depuis le flux temps réel.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor CZ as COM Zone / Chef RAM
+    participant API as API /api/equipment/:id/panne
+    participant DB as PostgreSQL
+    participant SSE as Diffusion SSE
+    actor Dest as Chef Bureau / Chef RAM / CSA / CSPH / Admin
+
+    CZ->>API: POST { description obligatoire }
+    API->>DB: UPDATE equipment SET status = en_reparation
+    API->>DB: INSERT movements (ajustement)
+    API->>DB: INSERT audit_logs (EQUIPMENT_PANNE_DECLAREE)
+    API->>SSE: broadcastEvent(equipment_critical, excludeUserId)
+    SSE--)Dest: Notification temps réel (sauf l'auteur)
+    Note over Dest: Cliquable → détail complet
+    opt Destinataire non connecté à l'envoi
+      Dest->>API: GET /api/notifications/recent (à la connexion)
+      API->>DB: SELECT … FROM audit_logs<br/>WHERE action = EQUIPMENT_PANNE_DECLAREE
+      DB-->>API: Historique récent
+      API-->>Dest: Notifications reconstituées
+    end
+        </pre>
+      </div>
+    </section>
+
+    <!-- ══════════ 08 · SÉQUENCE RÉFORME ══════════ -->
+    <section class="plate" id="seq-reforme">
+      <div class="plate-head">
+        <span class="eyebrow">Diagramme 08 — Séquence</span>
+        <h2>Réforme d'un véhicule</h2>
+        <p class="cap">
+          Réservée au Chef RAM et à l'Admin : le véhicule sort définitivement du parc actif
+          (soft-delete), mais son historique de mouvements reste consultable — la traçabilité
+          survit à la sortie du parc.
+        </p>
+      </div>
+      <div class="frame">
+        <pre class="mermaid">
+sequenceDiagram
+    actor CR as Chef RAM
+    participant API as API /api/equipment/:id/reformer
+    participant DB as PostgreSQL
+
+    CR->>API: POST { destinataire obligatoire, note }
+    API->>DB: UPDATE equipment SET status = reforme,<br/>deleted_at = NOW()
+    API->>DB: INSERT movements (traçabilité conservée)
+    API->>DB: INSERT audit_logs (EQUIPMENT_REFORME)
+    API-->>CR: 200 succès
+    Note over API,DB: Historique consultable ensuite via<br/>GET /api/equipment/:id/history<br/>(ignore deleted_at)
+        </pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: isDark ? "dark" : "default", securityLevel: "loose" });
+</script>
+</body>
+</html>

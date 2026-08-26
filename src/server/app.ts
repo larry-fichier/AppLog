@@ -47,7 +47,7 @@ const CENTRAL_ZONE_SQL = `(SELECT id FROM zones WHERE name = 'SERVICE_ADMINISTRA
 
 // ── Rôles habilités à consulter le Journal global d'audit ──────
 // Chef de bureau (admin) + rôles de supervision (CSA, CSPH).
-const AUDIT_VIEWER_ROLES = ['admin', 'chef_service_administratif', 'csph'];
+const AUDIT_VIEWER_ROLES = ['admin', 'chef_bureau', 'chef_service_administratif', 'csph'];
 
 // ── Actions dont l'écriture au journal d'audit déclenche AUSSI une
 // notification temps réel (cloche) pour AUDIT_VIEWER_ROLES ─────────
@@ -1966,6 +1966,8 @@ export async function createApp() {
       if (!rr) return res.status(404).json({ error: 'Demande introuvable' });
       if (rr.status !== 'open') return res.status(409).json({ error: 'Demande déjà traitée' });
 
+      const { rows: [eq] } = await query(`SELECT name FROM equipment WHERE id = $1`, [rr.equipment_id]);
+
       const { rows: [updated] } = await query(
         `UPDATE resupply_requests
          SET status='fulfilled', fulfilled_by=$1, fulfilled_by_name=$2, fulfilled_at=NOW(), fulfilled_quantity=$3, fulfillment_note=$4
@@ -1977,7 +1979,7 @@ export async function createApp() {
       recordAudit('RESUPPLY_FULFILLED', req.user, { requestId: id, equipmentId: rr.equipment_id }, req.ip);
       (req.app as any).broadcastEvent?.({
         type: 'resupply_fulfilled',
-        payload: { requestId: id, equipmentId: rr.equipment_id }
+        payload: { requestId: id, equipmentId: rr.equipment_id, equipmentName: eq?.name, quantity: validated.fulfilled_quantity, unite: rr.unite }
       }, { roles: ['com_zone'], zoneId: rr.zone_id });
 
       res.json({ success: true, request: updated });
@@ -2338,6 +2340,41 @@ export async function createApp() {
             payload: { requestId: r.id, name: r.equipment_name, quantity: r.quantity_at_trigger, unite: r.unite },
           });
         }
+
+        // Transferts en attente d'approbation — même logique état-courant :
+        // approuvé/rejeté depuis, il sort de 'pending' et disparaît de lui-même.
+        const { rows: transferRows } = await query(
+          `SELECT m.id, m.created_at, m.equipment_id, e.name AS equipment_name
+           FROM movements m
+           LEFT JOIN equipment e ON e.id = m.equipment_id
+           WHERE m.type = 'transfert' AND m.status = 'pending' AND m.created_at > NOW() - INTERVAL '14 days'
+           ORDER BY m.created_at DESC LIMIT 30`
+        );
+        for (const r of transferRows) {
+          items.push({
+            type: 'movement_transfer_requested', created_at: r.created_at,
+            payload: { movementId: r.id, equipmentId: r.equipment_id, equipmentName: r.equipment_name },
+          });
+        }
+      }
+
+      if (role === 'com_zone' && zoneId) {
+        // Ravitaillement livré mais pas encore confirmé par le com_zone — reste
+        // "en attente d'action" tant que la réception n'a pas été confirmée.
+        const { rows: fulfilledRows } = await query(
+          `SELECT rr.id, rr.created_at, rr.fulfilled_quantity, rr.unite, e.name AS equipment_name
+           FROM resupply_requests rr
+           LEFT JOIN equipment e ON e.id = rr.equipment_id
+           WHERE rr.status = 'fulfilled' AND rr.zone_id = $1 AND rr.created_at > NOW() - INTERVAL '14 days'
+           ORDER BY rr.created_at DESC LIMIT 30`,
+          [zoneId]
+        );
+        for (const r of fulfilledRows) {
+          items.push({
+            type: 'resupply_fulfilled', created_at: r.created_at,
+            payload: { requestId: r.id, equipmentName: r.equipment_name, quantity: r.fulfilled_quantity, unite: r.unite },
+          });
+        }
       }
 
       items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -2350,7 +2387,7 @@ export async function createApp() {
   // Config
   app.get("/api/config", getConfig);
   app.get("/api/admin/config", authenticateToken, getConfig);
-  app.post("/api/admin/config", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.post("/api/admin/config", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     try {
       const result = await AdminService.saveConfig(req.body);
       recordAudit('CONFIG_UPDATED', req.user, {
@@ -2364,7 +2401,7 @@ export async function createApp() {
   });
 
   // Récupération d'urgence : réactive les stations/zones coincées inactives
-  app.post("/api/admin/recover", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.post("/api/admin/recover", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     try {
       const stations = await query(`
         UPDATE stations SET is_active = true
@@ -2391,14 +2428,15 @@ export async function createApp() {
     }
   });
 
-  // Admin Users — lecture ouverte aux superviseurs, écriture admin seulement
-  app.get("/api/admin/users", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), async (req, res) => {
+  // Admin Users — lecture ouverte aux superviseurs (+ chef de bureau, parité
+  // complète avec le volet Configuration de l'admin), écriture admin/chef_bureau
+  app.get("/api/admin/users", authenticateToken, authorize(AUDIT_VIEWER_ROLES), async (req, res) => {
     try { res.json(await AdminService.getUsers()); }
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // Utilisateurs connectés — ouvert aux superviseurs
-  app.get("/api/admin/users/online", authenticateToken, authorize(['admin', 'chef_service_administratif', 'csph']), (req, res) => {
+  app.get("/api/admin/users/online", authenticateToken, authorize(AUDIT_VIEWER_ROLES), (req, res) => {
     const seen = new Set<string>();
     const online = Array.from(sseClients)
       .filter((c: any) => {
@@ -2410,7 +2448,7 @@ export async function createApp() {
     res.json(online);
   });
 
-  app.post("/api/admin/users", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.post("/api/admin/users", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     const pwdError = validatePassword(req.body.password);
     if (pwdError) return res.status(400).json({ error: pwdError });
     try {
@@ -2424,7 +2462,7 @@ export async function createApp() {
   });
 
   // zone_id : absent du body = zone inchangée, null = retirer la zone, uuid = assigner
-  app.put("/api/admin/users/:id/role", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.put("/api/admin/users/:id/role", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     try {
       const zoneId = Object.prototype.hasOwnProperty.call(req.body, 'zone_id') ? req.body.zone_id : undefined;
       const updated = await AdminService.updateUserRole(req.params.id, req.body.role, zoneId);
@@ -2436,7 +2474,7 @@ export async function createApp() {
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/admin/users/:id", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.delete("/api/admin/users/:id", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     try {
       await AdminService.deleteUser(req.params.id);
       recordAudit('USER_DELETED', req.user, { targetUserId: req.params.id }, req.ip);
@@ -2445,7 +2483,7 @@ export async function createApp() {
     catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin']), async (req: any, res) => {
+  app.put("/api/admin/users/:id/password", authenticateToken, authorize(['admin', 'chef_bureau']), async (req: any, res) => {
     const { newPassword, mustChangePassword } = req.body;
     if (!newPassword) return res.status(400).json({ error: "Nouveau mot de passe requis" });
     const pwdError = validatePassword(newPassword);
