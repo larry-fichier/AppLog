@@ -28,6 +28,7 @@ export function AdminSettings() {
     password:    "",
     displayName: "",
     role:        "agent_logistique" as UserRole,
+    zoneId:      "",
   });
 
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -126,6 +127,8 @@ export function AdminSettings() {
           role: u.role,
           displayName: u.display_name || u.displayName || u.username || u.email?.split("@")[0] || "",
           username: u.username || u.email?.split("@")[0] || "",
+          zoneId: u.zone_id ?? null,
+          zoneName: u.zone_name ?? null,
         })));
       } else {
         const ct = res.headers.get("content-type") || "";
@@ -185,6 +188,13 @@ export function AdminSettings() {
       toast.error("Nom d'utilisateur et mot de passe obligatoires");
       return;
     }
+    // Un com_zone sans zone assignée voit tout (le filtre serveur ne
+    // s'applique qu'aux comptes qui ont réellement une zone) — donc pas de
+    // création possible tant qu'une zone n'a pas été choisie.
+    if (newUser.role === "com_zone" && !newUser.zoneId) {
+      toast.error("Une zone est obligatoire pour un compte COM Zone");
+      return;
+    }
     setIsCreatingUser(true);
     try {
       const res = await apiFetch("/api/admin/users", {
@@ -195,6 +205,7 @@ export function AdminSettings() {
           password:    newUser.password,
           displayName: newUser.displayName.trim() || undefined,
           role:        newUser.role,
+          zone_id:     newUser.role === "com_zone" ? newUser.zoneId : undefined,
         }),
       });
 
@@ -202,7 +213,7 @@ export function AdminSettings() {
       if (!res.ok) throw new Error(result.error || "Erreur serveur");
 
       toast.success(`Utilisateur "${result.display_name || result.username}" créé avec succès`);
-      setNewUser({ username: "", password: "", displayName: "", role: "agent_logistique" });
+      setNewUser({ username: "", password: "", displayName: "", role: "agent_logistique", zoneId: "" });
       await fetchUsers();
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
@@ -211,17 +222,23 @@ export function AdminSettings() {
     }
   }
 
-  // ── Changer le rôle ──────────────────────────────────────
-  async function handleUpdateUserRole(uid: string, newRole: UserRole) {
+  // ── Changer le rôle (et/ou la zone) ───────────────────────
+  // zoneId : omis = zone inchangée, "" ou null = retirer la zone, uuid = assigner
+  async function handleUpdateUserRole(uid: string, newRole: UserRole, zoneId?: string | null) {
     try {
+      const body: Record<string, any> = { role: newRole };
+      if (zoneId !== undefined) body.zone_id = zoneId || null;
       const res = await apiFetch(`/api/admin/users/${uid}/role`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: newRole }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
-        toast.success("Rôle mis à jour");
-        setUsers(prev => prev.map(u => u.uid === uid ? { ...u, role: newRole } : u));
+        const updated = await res.json();
+        toast.success(zoneId !== undefined ? "Zone mise à jour" : "Rôle mis à jour");
+        setUsers(prev => prev.map(u => u.uid === uid
+          ? { ...u, role: newRole, zoneId: updated.zone_id ?? (zoneId !== undefined ? zoneId || null : u.zoneId) }
+          : u));
       } else {
         const err = await res.json();
         throw new Error(err.error || "Échec");
@@ -682,7 +699,7 @@ export function AdminSettings() {
                   {/* Rôle */}
                   <div className="space-y-3">
                     <Label className="text-sm font-semibold text-foreground">Rôle</Label>
-                    <Select value={newUser.role} onValueChange={(v) => { if (v) setNewUser(p => ({ ...p, role: v as UserRole })); }}>
+                    <Select value={newUser.role} onValueChange={(v) => { if (v) setNewUser(p => ({ ...p, role: v as UserRole, zoneId: v === "com_zone" ? p.zoneId : "" })); }}>
                       <SelectTrigger className="w-full bg-white h-12 text-base border-border-custom">
                         <SelectValue placeholder="Sélectionnez un rôle" />
                       </SelectTrigger>
@@ -693,6 +710,28 @@ export function AdminSettings() {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {/* Zone — obligatoire pour COM Zone : sans elle, le compte
+                      voit le stock/parc de toutes les zones confondues au lieu
+                      de la sienne (le filtre serveur ne s'applique qu'aux
+                      comptes qui ont réellement une zone assignée). */}
+                  {newUser.role === "com_zone" && (
+                    <div className="space-y-3">
+                      <Label className="text-sm font-semibold text-foreground">
+                        Zone <span className="text-red-400">*</span>
+                      </Label>
+                      <Select value={newUser.zoneId} onValueChange={(v) => { if (v) setNewUser(p => ({ ...p, zoneId: v })); }}>
+                        <SelectTrigger className="w-full bg-white h-12 text-base border-border-custom">
+                          <SelectValue placeholder="Sélectionnez une zone" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {settings.zones.map(z => (
+                            <SelectItem key={z.id} value={z.id} className="text-base">{z.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
 
                 </div>
 
@@ -740,7 +779,7 @@ export function AdminSettings() {
                   <table className="w-full text-left">
                     <thead>
                       <tr className="bg-[#f8fafc] border-b border-border-custom">
-                        {['Utilisateur', "Nom d'utilisateur", 'Rôle', 'Actions'].map(h => (
+                        {['Utilisateur', "Nom d'utilisateur", 'Rôle', 'Zone', 'Actions'].map(h => (
                           <th key={h} className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-[2px]">{h}</th>
                         ))}
                       </tr>
@@ -787,6 +826,28 @@ export function AdminSettings() {
                                 ))}
                               </SelectContent>
                             </Select>
+                          </td>
+
+                          {/* Zone — seul le rôle COM Zone en dépend ; les autres
+                              rôles ne sont jamais filtrés par zone. */}
+                          <td className="px-6 py-4 min-w-[180px]">
+                            {user.role === "com_zone" ? (
+                              <Select
+                                value={user.zoneId || ""}
+                                onValueChange={(v) => { if (v) handleUpdateUserRole(user.uid, user.role, v); }}
+                              >
+                                <SelectTrigger className={`w-full h-9 bg-white border-border-custom text-xs font-bold ${!user.zoneId ? "border-red-300 text-red-500" : ""}`}>
+                                  <SelectValue placeholder="⚠ Aucune zone" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {settings.zones.map(z => (
+                                    <SelectItem key={z.id} value={z.id} className="text-xs font-bold">{z.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="text-xs text-zinc-300">—</span>
+                            )}
                           </td>
 
                           {/* Actions */}

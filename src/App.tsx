@@ -23,6 +23,7 @@ import { SupervisionDashboard } from "@/components/SupervisionDashboard";
 import { ComZoneDashboard } from "@/components/ComZoneDashboard";
 import { ApprobationsPanel } from "@/components/ApprobationsPanel";
 import { ChefRamDashboard } from "@/components/ChefRamDashboard";
+import { GlobalEquipmentSearch } from "@/components/GlobalEquipmentSearch";
 
 // ── Intercepteur fetch : refresh automatique du token ─────────
 let isRefreshing = false;
@@ -1016,6 +1017,9 @@ export default function App() {
                     <div className="text-[9px] text-slate-400 font-bold tracking-widest uppercase truncate">Système de supervision</div>
                   </div>
                 </div>
+                <div className="hidden md:block flex-1 max-w-md mx-4">
+                  <GlobalEquipmentSearch />
+                </div>
                 <div className="flex items-center gap-1.5 sm:gap-3">
                   <div className="hidden sm:block text-right">
                     <div className="text-sm font-black text-slate-800 leading-tight">{userDisplayName}</div>
@@ -1113,6 +1117,9 @@ export default function App() {
                       Parc véhicules uniquement
                     </div>
                   </div>
+                </div>
+                <div className="hidden md:block flex-1 max-w-md mx-4">
+                  <GlobalEquipmentSearch />
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
@@ -1281,6 +1288,9 @@ export default function App() {
                       <p className="text-sm text-[#7f8c8d] font-medium uppercase tracking-widest">
                         Gestion des Ressources Logistiques
                       </p>
+                    </div>
+                    <div className="hidden lg:block flex-1 max-w-md mx-6 self-center">
+                      <GlobalEquipmentSearch />
                     </div>
                     <div className="flex items-center gap-4 bg-white dark:bg-slate-800 p-2 rounded-xl border border-border-custom shadow-sm relative">
                       <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent font-bold">

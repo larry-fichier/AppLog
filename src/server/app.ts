@@ -442,6 +442,13 @@ export async function createApp() {
   // Equipment - GET
   app.get("/api/equipment", authenticateToken, async (req: any, res) => {
     try {
+      // Un com_zone sans zone assignée ne doit JAMAIS voir tout le parc par
+      // défaut : EquipmentService.getAllEquipment traite un filtre zoneId
+      // absent comme "aucun filtre", donc un zone_id manquant renverrait
+      // silencieusement l'équipement de toutes les zones confondues.
+      if (req.user.role === "com_zone" && !req.user.zone_id) {
+        return res.json([]);
+      }
       const filter: { zoneId?: string; vehicleOnly?: boolean; hideZoneStock?: boolean } = {};
       if (req.user.role === "com_zone") filter.zoneId = req.user.zone_id;
       if (req.user.role === "chef_ram") filter.vehicleOnly = true;
@@ -2299,6 +2306,25 @@ export async function createApp() {
             },
           });
         }
+
+        // Création d'équipement — a son propre événement SSE dédié (voir POST
+        // /api/equipment) mais n'était jusqu'ici jamais rattrapée au backfill :
+        // un rôle absent au moment de la création ne la voyait jamais.
+        const { rows: createdRows } = await query(
+          `SELECT al.id, al.created_at, al.details, e.zone_id
+           FROM audit_logs al
+           LEFT JOIN equipment e ON e.id = NULLIF(al.details->>'equipmentId', '')::uuid
+           WHERE al.action = 'EQUIPMENT_CREATED'
+             AND al.created_at > NOW() - INTERVAL '14 days'
+           ORDER BY al.created_at DESC LIMIT 30`
+        );
+        for (const r of createdRows) {
+          if (role === 'com_zone' && r.zone_id !== zoneId) continue;
+          items.push({
+            type: 'equipment_created', created_at: r.created_at,
+            payload: { id: r.details?.equipmentId, name: r.details?.equipmentName },
+          });
+        }
       }
 
       if (STOCK_APPROVAL_ROLES.includes(role)) {
@@ -2373,6 +2399,26 @@ export async function createApp() {
           items.push({
             type: 'resupply_fulfilled', created_at: r.created_at,
             payload: { requestId: r.id, equipmentName: r.equipment_name, quantity: r.fulfilled_quantity, unite: r.unite },
+          });
+        }
+      }
+
+      if (AUDIT_VIEWER_ROLES.includes(role)) {
+        // Mêmes actions "notables" que le broadcast SSE en direct (voir
+        // recordAudit) — sans ce rattrapage, un rôle absent au moment précis
+        // de l'action (déclassement, réforme, config modifiée, compte
+        // créé/modifié…) ne la voit plus jamais.
+        const { rows: auditRows } = await query(
+          `SELECT id, created_at, action, user_name, role, details
+           FROM audit_logs
+           WHERE action = ANY($1::text[]) AND created_at > NOW() - INTERVAL '14 days'
+           ORDER BY created_at DESC LIMIT 30`,
+          [Array.from(NOTABLE_AUDIT_ACTIONS)]
+        );
+        for (const r of auditRows) {
+          items.push({
+            type: 'audit_log', created_at: r.created_at,
+            payload: { action: r.action, userName: r.user_name, role: r.role, details: r.details, timestamp: r.created_at },
           });
         }
       }

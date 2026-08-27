@@ -14,6 +14,8 @@ export interface AppUser {
   email: string;
   role: UserRole;
   displayName?: string;
+  zoneId?: string | null;
+  zoneName?: string | null;
 }
 
 export type EquipmentCategory = "rame" | "cuisine" | "electronique" | "groupe" | string;
