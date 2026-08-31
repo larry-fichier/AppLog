@@ -28,6 +28,7 @@ const ACTION_META: Record<string, { label: string; Icon: any; color: string; bg:
   MOVEMENT_CREATED:    { label: "Mouvement enregistré",           Icon: ArrowLeftRight, color: "text-purple-700 dark:text-purple-400",  bg: "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800" },
   MOVEMENT_UPDATED:    { label: "Mouvement modifié",              Icon: Pencil,       color: "text-purple-700 dark:text-purple-400",    bg: "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800" },
   STOCK_SORTIE:        { label: "Sortie de stock",                Icon: PackageMinus, color: "text-orange-700 dark:text-orange-400",    bg: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800" },
+  STOCK_SORTIE_STATION: { label: "Sortie de stock vers un bureau", Icon: PackageMinus, color: "text-orange-700 dark:text-orange-400",    bg: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800" },
   CONFIG_UPDATED:      { label: "Configuration mise à jour",      Icon: Settings2,    color: "text-cyan-700 dark:text-cyan-400",        bg: "bg-cyan-50 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800" },
   ADMIN_RECOVER:       { label: "Récupération d'urgence",         Icon: LifeBuoy,     color: "text-cyan-700 dark:text-cyan-400",        bg: "bg-cyan-50 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800" },
   USER_CREATED:        { label: "Utilisateur créé",               Icon: UserPlus,     color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800" },
@@ -75,6 +76,8 @@ function detailSummary(action: string, details: Record<string, any> | null): str
       return [details.equipmentName ? `Équipement : ${details.equipmentName}` : "", details.movementType ? `Type : ${details.movementType}` : ""].filter(Boolean).join(" · ");
     case "STOCK_SORTIE":
       return [details.equipmentName ? `Équipement : ${details.equipmentName}` : "", details.quantite ? `Quantité : -${details.quantite}` : "", details.destination ? `→ ${details.destination}` : ""].filter(Boolean).join(" · ");
+    case "STOCK_SORTIE_STATION":
+      return [details.equipmentName ? `Équipement : ${details.equipmentName}` : "", details.quantite ? `Quantité : -${details.quantite}` : "", details.stationName ? `→ ${details.stationName}` : ""].filter(Boolean).join(" · ");
     case "USER_CREATED":
     case "USER_ROLE_UPDATED":
     case "USER_DELETED":

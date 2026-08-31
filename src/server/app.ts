@@ -67,6 +67,7 @@ const NOTABLE_AUDIT_ACTIONS = new Set([
   'USER_ROLE_UPDATED',
   'USER_DELETED',
   'USER_PASSWORD_RESET',
+  'STOCK_SORTIE_STATION',
 ]);
 
 // ── Détection catégorie "stock" (Matériel d'exploitation) par libellé ──
@@ -1236,6 +1237,14 @@ export async function createApp() {
       if (!eq) return res.status(404).json({ error: 'Equipement introuvable' });
       const isVehicle = isVehicleCategory(eq.category_label);
 
+      // Le parc véhicules est le domaine exclusif du chef RAM (et du com_zone
+      // dans sa propre zone, via panne/réparation/réforme) — le chef de bureau
+      // gère le reste de l'équipement (matériel d'exploitation, informatique,
+      // énergie...) mais ne doit pas pouvoir créer de mouvement sur un véhicule.
+      if (req.user.role === 'chef_bureau' && isVehicle) {
+        return res.status(403).json({ error: "Les mouvements sur véhicules relèvent du chef RAM" });
+      }
+
       const sourceZoneId = from_zone_id || eq.zone_id;
 
       // ── COM Zone : uniquement des transferts entre stations de sa propre
@@ -1564,6 +1573,130 @@ export async function createApp() {
       res.json({ new_stock: newStock, seuil_alerte: seuilAlerte, unite, alerte });
     } catch (e: any) {
       console.error('[POST /api/equipment/:id/stock-sortie]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Sortie de stock zone → bureau (COM Zone distribue son stock déclaré
+  // vers une station de sa propre zone, ex: 2 toners 26A → CAB-MINDEF) ──
+  // Contrairement à stock-sortie (chef_bureau → zone), pas d'étape de
+  // confirmation de réception : le com_zone est à la fois source et témoin
+  // de la livraison. Le chef de bureau est simplement informé (journal
+  // global) et alerté si le seuil critique de la zone est atteint.
+  app.post('/api/equipment/:id/stock-sortie-station', authenticateToken, async (req: any, res) => {
+    if (req.user.role !== 'com_zone') {
+      return res.status(403).json({ error: "Action non autorisée" });
+    }
+    if (!req.user.zone_id) return res.status(400).json({ error: "Aucune zone assignée à ce compte" });
+    const { id } = req.params;
+    if (!isUUID(id)) return res.status(400).json({ error: 'ID invalide' });
+    const { quantite, station_id, note } = req.body;
+    const qty = Number(quantite);
+    if (!quantite || isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'Quantité invalide (doit être > 0)' });
+    }
+    if (!isUUID(station_id)) {
+      return res.status(400).json({ error: 'Bureau de destination obligatoire' });
+    }
+    try {
+      const { rows: [eq] } = await query(
+        `SELECT e.id, e.name, e.status, e.zone_id, e.category_id
+         FROM equipment e WHERE e.id = $1 AND e.deleted_at IS NULL`, [id]
+      );
+      if (!eq) return res.status(404).json({ error: 'Équipement introuvable' });
+      if (eq.zone_id !== req.user.zone_id) {
+        return res.status(403).json({ error: "Cet article ne fait pas partie du stock de votre zone" });
+      }
+
+      const { rows: [station] } = await query(`SELECT id, name, zone_id FROM stations WHERE id = $1`, [station_id]);
+      if (!station) return res.status(404).json({ error: 'Bureau introuvable' });
+      if (station.zone_id !== req.user.zone_id) {
+        return res.status(403).json({ error: "Ce bureau n'appartient pas à votre zone" });
+      }
+
+      const { rows: detailRows } = await query(
+        `SELECT field_key, field_value FROM equipment_details
+         WHERE equipment_id = $1 AND field_key IN ('quantite_stock','seuil_alerte','unite')`, [id]
+      );
+      const det: Record<string, string> = Object.fromEntries(detailRows.map((r: any) => [r.field_key, r.field_value]));
+      const currentStock = parseInt(det.quantite_stock || '0', 10);
+      const seuilAlerte  = parseInt(det.seuil_alerte  || '0', 10);
+      const unite        = det.unite || 'unité(s)';
+
+      if (qty > currentStock) {
+        return res.status(400).json({ error: `Stock insuffisant (disponible : ${currentStock} ${unite})` });
+      }
+      const newStock = currentStock - qty;
+
+      await query(`DELETE FROM equipment_details WHERE equipment_id = $1 AND field_key = 'quantite_stock'`, [id]);
+      await query(`INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'quantite_stock', $2)`, [id, String(newStock)]);
+      await query(`UPDATE equipment SET updated_at = NOW() WHERE id = $1`, [id]);
+
+      await query(
+        `INSERT INTO movements (equipment_id, type, performed_by, performed_by_name, note, from_zone_id, to_zone_id, to_station_id, previous_status, new_status)
+         VALUES ($1, 'sortie', $2, $3, $4, $5, $5, $6, $7, $7)`,
+        [id, req.user.id, req.user.display_name || req.user.username || 'Inconnu',
+         `Sortie stock zone → ${station.name} : -${qty} ${unite}${note ? ' — ' + note : ''}`,
+         req.user.zone_id, station_id, eq.status]
+      );
+
+      // Instance de stock au niveau du bureau — même schéma find-or-create
+      // que pour une sortie centrale vers une zone (voir stock-sortie).
+      let { rows: [stationEquip] } = await query(
+        `SELECT id FROM equipment
+         WHERE zone_id = $1 AND station_id = $2 AND category_id = $3 AND LOWER(name) = LOWER($4) AND deleted_at IS NULL`,
+        [req.user.zone_id, station_id, eq.category_id, eq.name]
+      );
+      if (!stationEquip) {
+        const newStationEquipId = await EquipmentService.createEquipment({
+          name: eq.name,
+          category_id: eq.category_id,
+          status: 'fonctionnel',
+          zone_id: req.user.zone_id,
+          station_id,
+          created_by: req.user.id,
+          details: { unite, seuil_alerte: String(seuilAlerte) },
+        });
+        stationEquip = { id: newStationEquipId };
+        recordAudit('EQUIPMENT_CREATED', req.user, { equipmentId: newStationEquipId, equipmentName: eq.name }, req.ip);
+      }
+      const { rows: stationDetailRows } = await query(
+        `SELECT field_value FROM equipment_details WHERE equipment_id = $1 AND field_key = 'quantite_stock'`,
+        [stationEquip.id]
+      );
+      const stationCurrentStock = parseInt(stationDetailRows[0]?.field_value || '0', 10);
+      await query(`DELETE FROM equipment_details WHERE equipment_id = $1 AND field_key = 'quantite_stock'`, [stationEquip.id]);
+      await query(`INSERT INTO equipment_details (equipment_id, field_key, field_value) VALUES ($1, 'quantite_stock', $2)`, [stationEquip.id, String(stationCurrentStock + qty)]);
+
+      recordAudit('STOCK_SORTIE_STATION', req.user, {
+        equipmentId: id, equipmentName: eq.name, quantite: qty, stationId: station_id, stationName: station.name, newStock,
+      }, req.ip);
+
+      const alerte = seuilAlerte > 0 && newStock <= seuilAlerte;
+      if (alerte) {
+        // Alerte sur le stock de LA ZONE (pas central) : le com_zone vient
+        // d'atteindre son propre seuil critique en distribuant vers un bureau.
+        (req.app as any).broadcastEvent?.({
+          type: 'stock_alerte',
+          payload: { equipment_id: id, name: eq.name, new_stock: newStock, seuil: seuilAlerte, unite }
+        }, { roles: NON_ZONE_ROLES_HORS_CHEF_RAM, excludeUserId: req.user.id });
+
+        const rr = await ensureResupplyRequest(query, {
+          equipmentId: id, zoneId: req.user.zone_id, currentStock: newStock,
+          seuilAlerte, unite, triggeredBy: req.user.id,
+        });
+        if (rr) {
+          recordAudit('RESUPPLY_NEEDED', req.user, { equipmentId: id, equipmentName: eq.name, quantity: newStock }, req.ip);
+          (req.app as any).broadcastEvent?.({
+            type: 'resupply_needed',
+            payload: { requestId: rr.id, equipment_id: id, name: eq.name, quantity: newStock, seuil: seuilAlerte, unite }
+          }, { roles: STOCK_APPROVAL_ROLES, excludeUserId: req.user.id });
+        }
+      }
+
+      res.json({ new_stock: newStock, seuil_alerte: seuilAlerte, unite, alerte });
+    } catch (e: any) {
+      console.error('[POST /api/equipment/:id/stock-sortie-station]', e.message);
       res.status(500).json({ error: e.message });
     }
   });

@@ -298,6 +298,18 @@ export default function App() {
     equipment_created:           "info",
     audit_log:                   "info",
   };
+  // Liste blanche de types de notification par rôle à portée restreinte —
+  // voir son usage dans le handler SSE et le backfill plus bas. Un rôle
+  // absent de cette table n'est pas restreint (reçoit tout ce que le serveur
+  // lui envoie déjà correctement scopé).
+  const ROLE_NOTIF_TYPES: Record<string, Set<string>> = {
+    chef_ram: new Set(["equipment_critical", "equipment_repaired", "equipment_created"]),
+    com_zone: new Set([
+      "equipment_critical", "equipment_repaired", "equipment_created",
+      "stock_declaration_approved", "stock_declaration_rejected",
+      "resupply_fulfilled", "movement_transfer_approved", "movement_transfer_rejected",
+    ]),
+  };
   const [alertDetail, setAlertDetail] = useState<{ type: string; payload: any; created_at?: string } | null>(null);
   const [alertActionLoading, setAlertActionLoading] = useState(false);
   const [alertNote, setAlertNote] = useState("");
@@ -313,6 +325,7 @@ export default function App() {
     MOVEMENT_CREATED: "a enregistré un mouvement",
     MOVEMENT_UPDATED: "a modifié un mouvement",
     STOCK_SORTIE: "a effectué une sortie de stock",
+    STOCK_SORTIE_STATION: "a ravitaillé un bureau depuis le stock de sa zone",
     CONFIG_UPDATED: "a mis à jour la configuration",
     ADMIN_RECOVER: "a lancé une récupération d'urgence",
     USER_CREATED: "a créé un utilisateur",
@@ -420,9 +433,10 @@ export default function App() {
       .then((rows: { type: string; payload: any; created_at: string }[]) => {
         if (!Array.isArray(rows) || rows.length === 0) return;
         // Même garde-fou que pour les événements en direct (voir plus bas) :
-        // chef_ram ne doit voir que ce qui concerne les véhicules.
-        const CHEF_RAM_NOTIF_TYPES = new Set(["equipment_critical", "equipment_repaired", "equipment_created"]);
-        const scoped = user.role === "chef_ram" ? rows.filter(r => CHEF_RAM_NOTIF_TYPES.has(r.type)) : rows;
+        // certains rôles à portée restreinte n'ont droit qu'à un sous-ensemble
+        // des types de notification.
+        const allowed = ROLE_NOTIF_TYPES[user.role];
+        const scoped = allowed ? rows.filter(r => allowed.has(r.type)) : rows;
         // Une notification "info" déjà vue avant ce chargement (donc antérieure
         // au dernier horodatage "vu") ne doit plus jamais réapparaître dans la
         // liste, même repliée — sinon elle revient à chaque rechargement/
@@ -449,11 +463,13 @@ export default function App() {
   React.useEffect(() => {
     const onExpired = () => {
       setUser(null);
+      setNotifications([]);
       if (notifRef.current) { notifRef.current.close(); }
       toast.error("Votre session a expiré. Veuillez vous reconnecter.");
     };
     const onReplaced = () => {
       setUser(null);
+      setNotifications([]);
       if (notifRef.current) { notifRef.current.close(); }
       toast.error("Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.", { duration: 8000 });
     };
@@ -461,8 +477,13 @@ export default function App() {
     // le cookie auth_token (partagé par tous les onglets) a été remplacé sous
     // les pieds de cet onglet, qui affichait encore l'ancien utilisateur alors
     // que le serveur n'aurait plus authentifié ses requêtes que sous le nouveau.
+    // Les notifications de l'ancien compte doivent disparaître avec lui — sinon
+    // le compte suivant à se connecter dans cet onglet les voit encore (ex :
+    // un com_zone qui hérite des alertes d'approbation du chef de bureau
+    // précédent).
     const onIdentityMismatch = () => {
       setUser(null);
+      setNotifications([]);
       if (notifRef.current) { notifRef.current.close(); }
       toast.error("Un autre compte a été connecté dans ce navigateur. Veuillez vous reconnecter.", { duration: 8000 });
     };
@@ -515,6 +536,7 @@ export default function App() {
         if (event.type === "session_replaced") {
           sessionStorage.removeItem("helios_user");
           setUser(null);
+          setNotifications([]);
           if (notifRef.current) { notifRef.current.close(); }
           toast.error(
             event.payload?.message || "Votre compte a été connecté depuis un autre appareil. Vous avez été déconnecté.",
@@ -522,12 +544,15 @@ export default function App() {
           );
           return;
         }
-        // Garde-fou côté client : chef_ram ne doit voir que ce qui concerne
-        // les véhicules ("Parc véhicules uniquement"). Le serveur filtre déjà
-        // à la source, mais on ne prend aucun risque — tout type hors de
-        // cette liste blanche est ignoré avant même d'entrer dans la cloche.
-        const CHEF_RAM_NOTIF_TYPES = new Set(["equipment_critical", "equipment_repaired", "equipment_created"]);
-        if (user?.role === "chef_ram" && !CHEF_RAM_NOTIF_TYPES.has(event.type)) return;
+        // Garde-fou côté client : certains rôles à portée restreinte ne doivent
+        // voir qu'un sous-ensemble des types de notification, même si le
+        // serveur filtre déjà à la source (défense en profondeur — un rôle
+        // hors de sa liste blanche ne doit jamais dépendre uniquement du bon
+        // filtrage serveur, ni d'un état client remis à zéro au bon moment).
+        // chef_ram : uniquement ce qui concerne les véhicules.
+        // com_zone : uniquement ce qui concerne sa propre zone (jamais les
+        // alertes d'approbation destinées à chef_bureau/CSA).
+        if (user && ROLE_NOTIF_TYPES[user.role] && !ROLE_NOTIF_TYPES[user.role].has(event.type)) return;
         // Une alerte déjà résolue (panne réparée, déclaration tranchée,
         // ravitaillement confirmé…) ne doit plus traîner dans la cloche —
         // même si le tab qui la voit encore n'est pas celui qui a résolu.
@@ -681,6 +706,10 @@ export default function App() {
     try { await fetch("/api/auth/logout", { method: "POST", credentials: "include" }); } catch {}
     sessionStorage.removeItem("helios_user");
     setUser(null);
+    // Sans ça, les alertes du compte précédent restent affichées au prochain
+    // utilisateur qui se connecte dans ce même onglet (ex : un com_zone qui
+    // hérite des notifications d'approbation d'un chef de bureau).
+    setNotifications([]);
     setIdentifier("");
     setPassword("");
     if (notifRef.current) { notifRef.current.close(); }

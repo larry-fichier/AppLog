@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { buildReportHtml, openReportPrintWindow, tableRows, renderTable } from "@/lib/reportTemplate";
@@ -20,6 +21,7 @@ interface EquipmentRow {
   name: string;
   status: string;
   category_label: string;
+  station_id?: string | null;
   details: Record<string, string>;
 }
 
@@ -70,8 +72,12 @@ interface StockRow {
   seuil: number;
 }
 
+// L'onglet "Stock" représente l'agrégat de la ZONE, pas le détail par bureau —
+// une instance déjà distribuée à un bureau (station_id renseigné, voir
+// stock-sortie-station) ne doit pas se substituer à l'instance de zone dans
+// cette vue, même si elle porte le même nom.
 function isStockItem(item: EquipmentRow): boolean {
-  return /exploitation|mat.riel.d/i.test(item.category_label || "");
+  return /exploitation|mat.riel.d/i.test(item.category_label || "") && !item.station_id;
 }
 
 function isVehicleItem(item: EquipmentRow): boolean {
@@ -105,6 +111,14 @@ export function ComZoneDashboard() {
   const [declareNote, setDeclareNote]     = useState("");
   const [declareLoading, setDeclareLoading] = useState(false);
 
+  // Ravitaillement d'un bureau de sa propre zone à partir du stock déjà déclaré.
+  const [stations, setStations]                 = useState<{ id: string; name: string }[]>([]);
+  const [distributeItem, setDistributeItem]       = useState<StockRow | null>(null);
+  const [distributeStationId, setDistributeStationId] = useState("");
+  const [distributeQty, setDistributeQty]         = useState("0");
+  const [distributeNote, setDistributeNote]       = useState("");
+  const [distributeLoading, setDistributeLoading] = useState(false);
+
   const [confirmRequest, setConfirmRequest]   = useState<ResupplyRequest | null>(null);
   const [confirmQty, setConfirmQty]           = useState("0");
   const [confirmNote, setConfirmNote]         = useState("");
@@ -127,16 +141,28 @@ export function ComZoneDashboard() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [eqRes, declRes, reqRes, catRes] = await Promise.all([
+      const [eqRes, declRes, reqRes, catRes, meRes, cfgRes] = await Promise.all([
         apiFetch("/api/equipment"),
         apiFetch("/api/stock-declarations?status=all"),
         apiFetch("/api/resupply-requests?status=all"),
         apiFetch("/api/exploitation-catalog"),
+        apiFetch("/api/auth/me"),
+        apiFetch("/api/config"),
       ]);
       if (eqRes.ok) setEquipment(await eqRes.json());
       if (declRes.ok) setDeclarations(await declRes.json());
       if (reqRes.ok) setRequests(await reqRes.json());
       if (catRes.ok) setCatalog(await catRes.json());
+      if (meRes.ok && cfgRes.ok) {
+        const me = await meRes.json();
+        const cfg = await cfgRes.json();
+        const myZoneId = me.user?.zoneId;
+        setStations(
+          (cfg.stations || [])
+            .filter((s: any) => s.zone_id === myZoneId)
+            .map((s: any) => ({ id: s.id, name: s.name }))
+        );
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -229,6 +255,40 @@ export function ComZoneDashboard() {
       toast.error(e.message);
     } finally {
       setDeclareLoading(false);
+    }
+  }
+
+  function openDistributeDialog(row: StockRow) {
+    setDistributeItem(row);
+    setDistributeStationId("");
+    setDistributeQty("0");
+    setDistributeNote("");
+  }
+
+  async function handleDistribute() {
+    if (!distributeItem || !distributeItem.zoneEquipmentId) return;
+    const qty = parseInt(distributeQty, 10);
+    if (isNaN(qty) || qty <= 0) { toast.error("Quantité invalide"); return; }
+    if (!distributeStationId) { toast.error("Bureau de destination obligatoire"); return; }
+    setDistributeLoading(true);
+    try {
+      const res = await apiFetch(`/api/equipment/${distributeItem.zoneEquipmentId}/stock-sortie-station`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantite: qty, station_id: distributeStationId, note: distributeNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Erreur serveur"); return; }
+      toast.success(`${qty} ${distributeItem.unite} envoyé(s) — nouveau stock de zone : ${data.new_stock}`);
+      if (data.alerte) {
+        toast.warning("Seuil critique atteint — chef de bureau / CSA alertés");
+      }
+      setDistributeItem(null);
+      fetchAll();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setDistributeLoading(false);
     }
   }
 
@@ -443,6 +503,11 @@ export function ComZoneDashboard() {
                             {low && <AlertTriangle size={16} />}
                             {row.stock} <span className="text-sm font-bold">{row.unite}</span>
                           </span>
+                          {!notDeclared && row.stock > 0 && (
+                            <Button size="sm" variant="outline" className="h-8 text-xs font-bold border-orange-200 text-orange-600 hover:bg-orange-50 dark:border-orange-800 dark:hover:bg-orange-950/30" onClick={() => openDistributeDialog(row)}>
+                              Ravitailler un bureau
+                            </Button>
+                          )}
                           <Button size="sm" className="h-8 text-xs font-bold bg-accent hover:bg-accent/90 text-white" onClick={() => openDeclareDialog(row)}>
                             Déclarer
                           </Button>
@@ -705,6 +770,86 @@ export function ComZoneDashboard() {
             <Button className="flex-1 bg-accent hover:bg-accent/90 text-white font-black" onClick={handleDeclare} disabled={declareLoading}>
               {declareLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <ClipboardCheck size={15} className="mr-2" />}
               Déclarer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog ravitaillement d'un bureau depuis le stock de la zone ── */}
+      <Dialog open={!!distributeItem} onOpenChange={open => { if (!open) setDistributeItem(null); }}>
+        <DialogContent className="sm:max-w-[400px] p-0 border-none bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-gradient-to-br from-orange-600 to-orange-500 text-white px-6 py-5">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-white flex items-center gap-2">
+                <Truck size={18} /> Ravitailler un bureau
+              </DialogTitle>
+              <DialogDescription className="text-orange-50 text-xs mt-0.5 font-medium">
+                {distributeItem?.name}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="px-6 py-5 space-y-5">
+            <div className="flex items-center justify-between px-4 py-3 rounded-xl border bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Stock disponible dans la zone</span>
+              <span className="text-lg font-black text-slate-800 dark:text-slate-200">
+                {distributeItem?.stock ?? 0} <span className="text-sm font-bold">{distributeItem?.unite || "unité(s)"}</span>
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Bureau de destination <span className="text-red-400">*</span>
+              </Label>
+              <Select value={distributeStationId} onValueChange={v => { if (v) setDistributeStationId(v); }}>
+                <SelectTrigger className="w-full h-11 bg-white dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600">
+                  <SelectValue placeholder={stations.length === 0 ? "Aucun bureau dans cette zone" : "Choisir un bureau"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {stations.map(s => (
+                    <SelectItem key={s.id} value={s.id} className="text-sm font-bold">{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Quantité <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                max={distributeItem?.stock ?? undefined}
+                value={distributeQty}
+                onChange={e => setDistributeQty(e.target.value)}
+                className="h-11 text-lg font-black text-center border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Note (optionnel)</Label>
+              <Input
+                value={distributeNote}
+                onChange={e => setDistributeNote(e.target.value)}
+                placeholder="Ex : remise en main propre au chef de bureau"
+                className="h-9 text-sm border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              />
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Le stock de la zone diminue immédiatement. Le chef de bureau et la CSA en sont informés,
+              et alertés si ce ravitaillement fait passer le stock de la zone sous le seuil critique.
+            </p>
+          </div>
+
+          <DialogFooter className="px-6 pb-5 flex gap-3">
+            <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={() => setDistributeItem(null)} disabled={distributeLoading}>
+              Annuler
+            </Button>
+            <Button className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black" onClick={handleDistribute} disabled={distributeLoading}>
+              {distributeLoading ? <Loader2 size={15} className="animate-spin mr-2" /> : <Truck size={15} className="mr-2" />}
+              Envoyer
             </Button>
           </DialogFooter>
         </DialogContent>
