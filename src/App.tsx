@@ -419,7 +419,20 @@ export default function App() {
       .then(r => r.ok ? r.json() : [])
       .then((rows: { type: string; payload: any; created_at: string }[]) => {
         if (!Array.isArray(rows) || rows.length === 0) return;
-        const backfilled = rows.map(row => ({
+        // Même garde-fou que pour les événements en direct (voir plus bas) :
+        // chef_ram ne doit voir que ce qui concerne les véhicules.
+        const CHEF_RAM_NOTIF_TYPES = new Set(["equipment_critical", "equipment_repaired", "equipment_created"]);
+        const scoped = user.role === "chef_ram" ? rows.filter(r => CHEF_RAM_NOTIF_TYPES.has(r.type)) : rows;
+        // Une notification "info" déjà vue avant ce chargement (donc antérieure
+        // au dernier horodatage "vu") ne doit plus jamais réapparaître dans la
+        // liste, même repliée — sinon elle revient à chaque rechargement/
+        // reconnexion tant qu'elle reste dans la fenêtre de 14 jours du
+        // backfill. Seules les "critical" (encore non résolues) doivent
+        // persister quel que soit leur âge.
+        const fresh = scoped.filter(row =>
+          NOTIF_KIND[row.type] === "critical" || new Date(row.created_at).getTime() > lastSeen
+        );
+        const backfilled = fresh.map(row => ({
           id: ++notifIdRef.current,
           message: buildNotificationMessage(row),
           type: row.type,
@@ -509,6 +522,12 @@ export default function App() {
           );
           return;
         }
+        // Garde-fou côté client : chef_ram ne doit voir que ce qui concerne
+        // les véhicules ("Parc véhicules uniquement"). Le serveur filtre déjà
+        // à la source, mais on ne prend aucun risque — tout type hors de
+        // cette liste blanche est ignoré avant même d'entrer dans la cloche.
+        const CHEF_RAM_NOTIF_TYPES = new Set(["equipment_critical", "equipment_repaired", "equipment_created"]);
+        if (user?.role === "chef_ram" && !CHEF_RAM_NOTIF_TYPES.has(event.type)) return;
         // Une alerte déjà résolue (panne réparée, déclaration tranchée,
         // ravitaillement confirmé…) ne doit plus traîner dans la cloche —
         // même si le tab qui la voit encore n'est pas celui qui a résolu.

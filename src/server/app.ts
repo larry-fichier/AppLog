@@ -88,6 +88,20 @@ const STOCK_READ_ROLES = [...STOCK_APPROVAL_ROLES, 'csph'];
 // rôles opèrent déjà toutes zones confondues (supervision ou gestion centrale),
 // donc rien à restreindre pour eux.
 const NON_ZONE_ROLES = ['admin', 'agent_logistique', 'chef_bureau', 'chef_ram', 'chef_service_administratif', 'csph'];
+// chef_ram est cantonné au parc véhicules ("Parc véhicules uniquement" dans
+// son propre tableau de bord) — contrairement aux autres membres de
+// NON_ZONE_ROLES, il ne doit jamais recevoir d'alerte sur un équipement qui
+// n'est pas un véhicule (stock, informatique, énergie...).
+const NON_ZONE_ROLES_HORS_CHEF_RAM = NON_ZONE_ROLES.filter(r => r !== 'chef_ram');
+
+// Diffuse un événement équipement à NON_ZONE_ROLES en gardant chef_ram à
+// l'écart sauf si l'équipement concerné est effectivement un véhicule.
+function broadcastEquipmentEvent(app: any, event: any, isVehicle: boolean, excludeUserId?: string) {
+  app.broadcastEvent?.(event, { roles: NON_ZONE_ROLES_HORS_CHEF_RAM, excludeUserId });
+  if (isVehicle) {
+    app.broadcastEvent?.(event, { roles: ['chef_ram'], excludeUserId });
+  }
+}
 
 // ── Met à jour un champ equipment_details (pattern delete+insert, évite les doublons) ──
 async function setEquipmentDetail(q: (text: string, params?: any[]) => Promise<any>, equipmentId: string, key: string, value: string) {
@@ -599,7 +613,7 @@ export async function createApp() {
       });
 
       recordAudit('EQUIPMENT_CREATED', req.user, { equipmentId: id, equipmentName: name }, req.ip);
-      (req.app as any).broadcastEvent?.({ type: 'equipment_created', payload: { id: String(id), name } }, { roles: NON_ZONE_ROLES, excludeUserId: req.user.id });
+      broadcastEquipmentEvent(req.app, { type: 'equipment_created', payload: { id: String(id), name } }, isVehicle, req.user.id);
       if (finalZoneId) {
         (req.app as any).broadcastEvent?.({ type: 'equipment_created', payload: { id: String(id), name } }, { roles: ['com_zone'], zoneId: finalZoneId, excludeUserId: req.user.id });
       }
@@ -817,7 +831,7 @@ export async function createApp() {
           message: `"${equip.name}" en panne — ${validated.description}`,
         }
       };
-      (req.app as any).broadcastEvent?.(panneEvent, { roles: NON_ZONE_ROLES, excludeUserId: req.user.id });
+      broadcastEquipmentEvent(req.app, panneEvent, isVehicle, req.user.id);
       if (equip.zone_id) {
         (req.app as any).broadcastEvent?.(panneEvent, { roles: ['com_zone'], zoneId: equip.zone_id, excludeUserId: req.user.id });
       }
@@ -888,7 +902,7 @@ export async function createApp() {
           message: `"${equip.name}" réparé — de retour en service${validated.note ? ` (${validated.note})` : ''}`,
         }
       };
-      (req.app as any).broadcastEvent?.(repareEvent, { roles: NON_ZONE_ROLES, excludeUserId: req.user.id });
+      broadcastEquipmentEvent(req.app, repareEvent, isVehicle, req.user.id);
       if (equip.zone_id) {
         (req.app as any).broadcastEvent?.(repareEvent, { roles: ['com_zone'], zoneId: equip.zone_id, excludeUserId: req.user.id });
       }
@@ -1214,10 +1228,13 @@ export async function createApp() {
 
     try {
       const { rows: [eq] } = await query(
-        'SELECT name, status, zone_id, station_id FROM equipment WHERE id=$1 AND deleted_at IS NULL',
+        `SELECT e.name, e.status, e.zone_id, e.station_id, c.label AS category_label
+         FROM equipment e LEFT JOIN categories c ON c.id = e.category_id
+         WHERE e.id=$1 AND e.deleted_at IS NULL`,
         [equipment_id]
       );
       if (!eq) return res.status(404).json({ error: 'Equipement introuvable' });
+      const isVehicle = isVehicleCategory(eq.category_label);
 
       const sourceZoneId = from_zone_id || eq.zone_id;
 
@@ -1321,7 +1338,7 @@ export async function createApp() {
               : `"${eq.name}" passé hors service`,
           }
         };
-        (req.app as any).broadcastEvent?.(criticalEvent, { roles: NON_ZONE_ROLES, excludeUserId: req.user.id });
+        broadcastEquipmentEvent(req.app, criticalEvent, isVehicle, req.user.id);
         if (sourceZoneId) {
           (req.app as any).broadcastEvent?.(criticalEvent, { roles: ['com_zone'], zoneId: sourceZoneId, excludeUserId: req.user.id });
         }
@@ -1524,11 +1541,12 @@ export async function createApp() {
       const alerte = seuilAlerte > 0 && newStock <= seuilAlerte;
       if (alerte) {
         // Alerte sur le stock central (chef_bureau) — pas une zone en particulier,
-        // com_zone n'a pas à voir cette alerte (elle ne concerne pas sa propre zone).
+        // com_zone n'a pas à voir cette alerte (elle ne concerne pas sa propre zone),
+        // et chef_ram encore moins (aucun rapport avec les véhicules).
         (req.app as any).broadcastEvent?.({
           type: 'stock_alerte',
           payload: { equipment_id: id, name: eq.name, new_stock: newStock, seuil: seuilAlerte, unite }
-        }, { roles: NON_ZONE_ROLES, excludeUserId: req.user.id });
+        }, { roles: NON_ZONE_ROLES_HORS_CHEF_RAM, excludeUserId: req.user.id });
 
         const rr = await ensureResupplyRequest(query, {
           equipmentId: id, zoneId: eq.zone_id, currentStock: newStock,
@@ -2238,9 +2256,10 @@ export async function createApp() {
         // récente existe pour le même équipement) ne doit plus réapparaître
         // comme une alerte active — elle est résolue.
         const { rows: panneRows } = await query(
-          `SELECT al.id, al.created_at, al.details, e.zone_id
+          `SELECT al.id, al.created_at, al.details, e.zone_id, c.label AS category_label
            FROM audit_logs al
            LEFT JOIN equipment e ON e.id = NULLIF(al.details->>'equipmentId', '')::uuid
+           LEFT JOIN categories c ON c.id = e.category_id
            WHERE al.action = 'EQUIPMENT_PANNE_DECLAREE'
              AND al.created_at > NOW() - INTERVAL '14 days'
              AND NOT EXISTS (
@@ -2253,6 +2272,7 @@ export async function createApp() {
         );
         for (const r of panneRows) {
           if (role === 'com_zone' && r.zone_id !== zoneId) continue;
+          if (role === 'chef_ram' && !isVehicleCategory(r.category_label)) continue;
           const name = r.details?.equipmentName || 'Équipement';
           const description = r.details?.description;
           items.push({
@@ -2265,15 +2285,17 @@ export async function createApp() {
         }
 
         const { rows: repareRows } = await query(
-          `SELECT al.id, al.created_at, al.details, e.zone_id
+          `SELECT al.id, al.created_at, al.details, e.zone_id, c.label AS category_label
            FROM audit_logs al
            LEFT JOIN equipment e ON e.id = NULLIF(al.details->>'equipmentId', '')::uuid
+           LEFT JOIN categories c ON c.id = e.category_id
            WHERE al.action = 'EQUIPMENT_REPARATION_DECLAREE'
              AND al.created_at > NOW() - INTERVAL '14 days'
            ORDER BY al.created_at DESC LIMIT 30`
         );
         for (const r of repareRows) {
           if (role === 'com_zone' && r.zone_id !== zoneId) continue;
+          if (role === 'chef_ram' && !isVehicleCategory(r.category_label)) continue;
           const name = r.details?.equipmentName || 'Équipement';
           const note = r.details?.note;
           items.push({
@@ -2289,9 +2311,10 @@ export async function createApp() {
         // actuel (repris en service, réparé, réformé…) — sinon l'alerte
         // survivrait indéfiniment à sa propre résolution.
         const { rows: mvRows } = await query(
-          `SELECT m.id, m.created_at, m.type, m.new_status, m.from_zone_id, e.name AS equipment_name
+          `SELECT m.id, m.created_at, m.type, m.new_status, m.from_zone_id, e.name AS equipment_name, c.label AS category_label
            FROM movements m
            LEFT JOIN equipment e ON e.id = m.equipment_id
+           LEFT JOIN categories c ON c.id = e.category_id
            WHERE (m.type = 'sortie' OR m.new_status = 'hors_service')
              AND m.created_at > NOW() - INTERVAL '14 days'
              AND e.status = 'hors_service'
@@ -2299,6 +2322,7 @@ export async function createApp() {
         );
         for (const r of mvRows) {
           if (role === 'com_zone' && r.from_zone_id !== zoneId) continue;
+          if (role === 'chef_ram' && !isVehicleCategory(r.category_label)) continue;
           items.push({
             type: 'equipment_critical', created_at: r.created_at,
             payload: {
@@ -2311,15 +2335,17 @@ export async function createApp() {
         // /api/equipment) mais n'était jusqu'ici jamais rattrapée au backfill :
         // un rôle absent au moment de la création ne la voyait jamais.
         const { rows: createdRows } = await query(
-          `SELECT al.id, al.created_at, al.details, e.zone_id
+          `SELECT al.id, al.created_at, al.details, e.zone_id, c.label AS category_label
            FROM audit_logs al
            LEFT JOIN equipment e ON e.id = NULLIF(al.details->>'equipmentId', '')::uuid
+           LEFT JOIN categories c ON c.id = e.category_id
            WHERE al.action = 'EQUIPMENT_CREATED'
              AND al.created_at > NOW() - INTERVAL '14 days'
            ORDER BY al.created_at DESC LIMIT 30`
         );
         for (const r of createdRows) {
           if (role === 'com_zone' && r.zone_id !== zoneId) continue;
+          if (role === 'chef_ram' && !isVehicleCategory(r.category_label)) continue;
           items.push({
             type: 'equipment_created', created_at: r.created_at,
             payload: { id: r.details?.equipmentId, name: r.details?.equipmentName },

@@ -205,11 +205,11 @@ function getDynamicFields(categoryLabel: string): DynamicField[] {
   if (l.includes("informatique") || l.includes("it") || l.includes("ordinateur") ||
       l.includes("électronique") || l.includes("electronique") || l.includes("imprimante") || l.includes("réseau")) {
     return [
-      { key: "designation",    label: "Désignation",            type: "text",     placeholder: "Ex: PC bureau, Imprimante accueil...", required: true, fullWidth: true, section: "Identification" },
+      { key: "numero_serie",   label: "Numéro de Série",        type: "text",     placeholder: "Ex: SN-DELL-12345", isSerial: true, required: true, section: "Identification" },
+      { key: "designation",    label: "Désignation",            type: "text",     placeholder: "Ex: PC bureau, Imprimante accueil...", fullWidth: true },
       { key: "type_materiel",  label: "Type de matériel",       type: "select",   placeholder: "", options: ["Ordinateur de bureau", "Laptop / Portable", "Serveur", "Imprimante", "Photocopieur", "Switch / Routeur", "Écran", "Tablette", "Autre"], required: true, section: "Caractéristiques" },
       { key: "marque",         label: "Marque",                 type: "text",     placeholder: "Ex: Dell, HP, Lenovo...", required: true },
       { key: "modele",         label: "Modèle / Référence",     type: "text",     placeholder: "Ex: Latitude 5420" },
-      { key: "numero_serie",   label: "Numéro de Série",        type: "text",     placeholder: "Ex: SN-DELL-12345" },
       { key: "position",       label: "Emplacement / N° local", type: "text",     placeholder: "Ex: Bureau 58, Service Informatique", section: "Affectation" },
       { key: "date_entree",    label: "Date d'entrée",          type: "date",     placeholder: "", section: "Dates" },
       { key: "date_deploiement", label: "Date de déploiement",  type: "date",     placeholder: "" },
